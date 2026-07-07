@@ -133,6 +133,16 @@ Website log intake also caps request size, batch size, and per-user request rate
 
 Production releases should be distributed through `www.downloadsecondbrain.com`, not by sharing development zips. The website should track versions, account status, trial/subscription state, and the download links for the latest production release assets.
 
+Current production release verified through the website API:
+
+- Version: `0.1.4`
+- Tag: `prod-v0.1.4`
+- GitHub release: `https://github.com/Siyam-A-S/second-brain/releases/tag/prod-v0.1.4`
+- Windows website download: `https://www.downloadsecondbrain.com/api/downloads/windows`
+- macOS website download: `https://www.downloadsecondbrain.com/api/downloads/macos`
+- Windows GitHub asset: `https://github.com/Siyam-A-S/second-brain/releases/download/prod-v0.1.4/Second-Brain-Setup-0.1.4-prod.exe`
+- macOS GitHub asset: `https://github.com/Siyam-A-S/second-brain/releases/download/prod-v0.1.4/Second-Brain-0.1.4-prod-mac-arm64.dmg`
+
 ## Website Hosting
 
 The release website is a Node/Nixpacks app in Coolify, not a static Vite site, because `server.mjs` serves both the SPA and API routes.
