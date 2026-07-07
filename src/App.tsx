@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { loadStripe } from "@stripe/stripe-js";
-import { motion } from "framer-motion";
 import {
   ArrowRight,
+  CheckCircle2,
   CreditCard,
-  LockKeyhole,
+  Download,
+  ExternalLink,
+  KeyRound,
   LogOut,
   MonitorDown,
+  ShieldCheck,
   UserRound,
 } from "lucide-react";
 import {
@@ -15,6 +18,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useNavigate,
 } from "react-router-dom";
 import { z } from "zod";
 import { useAuth } from "./hooks/useAuth";
@@ -23,19 +27,52 @@ const checkoutSessionSchema = z.object({
   url: z.string().url(),
 });
 
-async function fetchLatestReleaseAssets() {
-  // Replace this placeholder with a real fetch to:
-  // https://api.github.com/repos/siyam-a-s/second-brain/releases/latest
-  // Then map the release assets into macOS / Windows download button URLs.
-  return {
-    macosUrl: "#",
-    windowsUrl: "#",
-  };
+const releaseSchema = z.object({
+  release: z.object({
+    assets: z.object({
+      macos: z
+        .object({
+          name: z.string(),
+          size: z.number().nullable().optional(),
+          url: z.string(),
+        })
+        .nullable(),
+      windows: z
+        .object({
+          name: z.string(),
+          size: z.number().nullable().optional(),
+          url: z.string(),
+        })
+        .nullable(),
+    }),
+    htmlUrl: z.string().url().optional(),
+    name: z.string(),
+    publishedAt: z.string().nullable().optional(),
+    tagName: z.string(),
+    version: z.string(),
+  }),
+});
+
+type LatestRelease = z.infer<typeof releaseSchema>["release"];
+
+async function fetchLatestRelease() {
+  const response = await fetch("/api/releases/latest");
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      payload && typeof payload.error === "string"
+        ? payload.error
+        : "Unable to load release.",
+    );
+  }
+
+  return releaseSchema.parse(payload).release;
 }
 
-function formatDate(value: string | null) {
+function formatDate(value: string | null | undefined) {
   if (!value) {
-    return "Not set";
+    return "Not available";
   }
 
   return new Intl.DateTimeFormat("en-US", {
@@ -44,32 +81,46 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function Shell({ children }: { children: ReactNode }) {
+function formatBytes(value: number | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  return `${Math.round(value / 1024 / 1024)} MB`;
+}
+
+function AppShell({ children }: { children: ReactNode }) {
   const { isAuthenticated, signOut, user } = useAuth();
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(245,158,11,0.18),_transparent_35%),linear-gradient(180deg,_#0f172a_0%,_#111827_45%,_#020617_100%)] text-slate-100">
-      <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-8 sm:px-8">
-        <header className="flex flex-col gap-4 border-b border-white/10 pb-6 sm:flex-row sm:items-center sm:justify-between">
-          <Link className="text-lg font-semibold tracking-[0.24em] text-amber-200" to="/">
-            SECOND BRAIN
+    <div className="min-h-screen bg-[#f6f8fb] text-[#171717]">
+      <header className="sticky top-0 z-20 border-b border-black/10 bg-[#f6f8fb]/90 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4 sm:px-8">
+          <Link className="flex items-center gap-3" to="/">
+            <span className="grid h-9 w-9 place-items-center rounded-md bg-[#171717] text-sm font-semibold text-white">
+              SB
+            </span>
+            <span className="text-sm font-semibold uppercase tracking-[0.18em]">
+              Second Brain
+            </span>
           </Link>
-          <nav className="flex flex-wrap items-center gap-3 text-sm text-slate-300">
+
+          <nav className="flex items-center gap-2 text-sm">
             <Link
-              className="rounded-full border border-white/10 px-4 py-2 transition hover:border-amber-300/40 hover:text-white"
-              to="/login"
+              className="hidden rounded-md px-3 py-2 text-neutral-600 transition hover:bg-white hover:text-neutral-950 sm:inline-flex"
+              to="/#download"
             >
-              {isAuthenticated ? "Account" : "Login"}
+              Download
             </Link>
             <Link
-              className="rounded-full bg-amber-300 px-4 py-2 font-medium text-slate-950 transition hover:bg-amber-200"
-              to="/checkout"
+              className="rounded-md px-3 py-2 text-neutral-600 transition hover:bg-white hover:text-neutral-950"
+              to={isAuthenticated ? "/account" : "/auth"}
             >
-              Checkout
+              {isAuthenticated ? "Account" : "Sign in"}
             </Link>
             {isAuthenticated ? (
               <button
-                className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 transition hover:border-white/25 hover:text-white"
+                className="hidden items-center gap-2 rounded-md border border-black/10 bg-white px-3 py-2 text-neutral-700 shadow-sm transition hover:border-black/20 hover:text-neutral-950 sm:inline-flex"
                 onClick={() => {
                   void signOut();
                 }}
@@ -78,135 +129,263 @@ function Shell({ children }: { children: ReactNode }) {
                 <LogOut className="h-4 w-4" />
                 {user?.email ?? "Sign out"}
               </button>
-            ) : null}
+            ) : (
+              <Link
+                className="inline-flex items-center gap-2 rounded-md bg-[#236f5a] px-4 py-2 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c]"
+                to="/auth?mode=signup"
+              >
+                Create account
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            )}
           </nav>
-        </header>
-        <main className="flex-1">{children}</main>
+        </div>
+      </header>
+
+      <main>{children}</main>
+    </div>
+  );
+}
+
+function ReleaseDownload({ release }: { release: LatestRelease | null }) {
+  const windows = release?.assets.windows;
+  const macos = release?.assets.macos;
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <a
+        className={`group flex min-h-24 items-center justify-between rounded-md border border-black/10 bg-white px-5 py-4 shadow-sm transition ${
+          windows ? "hover:-translate-y-0.5 hover:border-[#236f5a]/50" : "pointer-events-none opacity-60"
+        }`}
+        href={windows?.url ?? "#"}
+      >
+        <span>
+          <span className="block font-medium">Windows installer</span>
+          <span className="mt-1 block text-sm text-neutral-500">
+            {windows ? `${windows.name} ${formatBytes(windows.size)}` : "Coming soon"}
+          </span>
+        </span>
+        <Download className="h-5 w-5 text-[#236f5a] transition group-hover:translate-y-0.5" />
+      </a>
+      <a
+        className={`group flex min-h-24 items-center justify-between rounded-md border border-black/10 bg-white px-5 py-4 shadow-sm transition ${
+          macos ? "hover:-translate-y-0.5 hover:border-[#236f5a]/50" : "pointer-events-none opacity-60"
+        }`}
+        href={macos?.url ?? "#"}
+      >
+        <span>
+          <span className="block font-medium">macOS Apple Silicon</span>
+          <span className="mt-1 block text-sm text-neutral-500">
+            {macos ? `${macos.name} ${formatBytes(macos.size)}` : "Coming soon"}
+          </span>
+        </span>
+        <Download className="h-5 w-5 text-[#236f5a] transition group-hover:translate-y-0.5" />
+      </a>
+    </div>
+  );
+}
+
+function ProductPreview() {
+  return (
+    <div className="relative overflow-hidden rounded-lg border border-black/10 bg-[#111827] p-4 shadow-2xl shadow-black/20">
+      <div className="mb-4 flex items-center justify-between border-b border-white/10 pb-3">
+        <div className="flex gap-2">
+          <span className="h-3 w-3 rounded-full bg-[#e55934]" />
+          <span className="h-3 w-3 rounded-full bg-[#f7c948]" />
+          <span className="h-3 w-3 rounded-full bg-[#46b58a]" />
+        </div>
+        <span className="text-xs text-white/50">Second Brain desktop</span>
+      </div>
+      <div className="grid min-h-[330px] gap-4 md:grid-cols-[0.8fr_1.2fr]">
+        <div className="space-y-3 rounded-md bg-white/5 p-4">
+          {["Research", "Invoices", "Meeting notes", "Local archive"].map((label, index) => (
+            <div
+              className={`h-11 rounded-md ${
+                index === 0 ? "bg-[#46b58a]/25" : "bg-white/10"
+              }`}
+              key={label}
+            />
+          ))}
+        </div>
+        <div className="rounded-md bg-[#f6f8fb] p-5">
+          <div className="mb-5 h-7 w-2/3 rounded bg-neutral-900/80" />
+          <div className="space-y-3">
+            <div className="h-4 w-full rounded bg-neutral-300" />
+            <div className="h-4 w-11/12 rounded bg-neutral-300" />
+            <div className="h-4 w-8/12 rounded bg-neutral-300" />
+          </div>
+          <div className="mt-8 grid grid-cols-2 gap-3">
+            <div className="h-24 rounded-md border border-black/10 bg-white" />
+            <div className="h-24 rounded-md border border-black/10 bg-white" />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
 function LandingPage() {
-  const [downloadUrls, setDownloadUrls] = useState({
-    macosUrl: "#",
-    windowsUrl: "#",
-  });
+  const [release, setRelease] = useState<LatestRelease | null>(null);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
 
   useEffect(() => {
-    let isActive = true;
+    let active = true;
 
-    void fetchLatestReleaseAssets().then((assets) => {
-      if (isActive) {
-        setDownloadUrls(assets);
-      }
-    });
+    void fetchLatestRelease()
+      .then((nextRelease) => {
+        if (active) {
+          setRelease(nextRelease);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setReleaseError(
+            error instanceof Error ? error.message : "Unable to load downloads.",
+          );
+        }
+      });
 
     return () => {
-      isActive = false;
+      active = false;
     };
   }, []);
 
   return (
-    <Shell>
-      <section className="grid flex-1 items-center gap-10 py-16 lg:grid-cols-[1.15fr_0.85fr] lg:py-24">
-        <motion.div
-          animate={{ opacity: 1, y: 0 }}
-          initial={{ opacity: 0, y: 18 }}
-          transition={{ duration: 0.5 }}
-          className="space-y-6"
-        >
-          <p className="text-sm uppercase tracking-[0.3em] text-amber-200/80">
-            Desktop capture. Search. Recall.
+    <AppShell>
+      <section className="mx-auto grid max-w-7xl gap-10 px-5 py-12 sm:px-8 lg:grid-cols-[0.95fr_1.05fr] lg:py-20">
+        <div className="flex flex-col justify-center">
+          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-[#236f5a]">
+            Desktop memory for private work
           </p>
-          <h1 className="max-w-3xl font-serif text-5xl leading-tight text-white sm:text-6xl">
+          <h1 className="mt-5 max-w-3xl text-5xl font-semibold leading-[1.02] tracking-normal text-neutral-950 sm:text-7xl">
             Second Brain
           </h1>
-          <p className="max-w-2xl text-lg leading-8 text-slate-300">
-            Private desktop memory, account access, and subscription billing now share
-            one consistent entry point across the landing page and portal.
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-neutral-600">
+            Download the desktop app, create an account, and keep subscription access,
+            diagnostics, and production updates in one quiet place.
           </p>
-          <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <a
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-3 font-medium text-slate-950 transition hover:bg-slate-200"
-              href={downloadUrls.macosUrl}
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-[#236f5a] px-5 py-3 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c]"
+              href="#download"
             >
-              macOS Download
+              Download app
               <MonitorDown className="h-4 w-4" />
             </a>
-            <a
-              className="inline-flex items-center justify-center gap-2 rounded-full border border-white/15 px-6 py-3 font-medium text-white transition hover:border-amber-300/50 hover:bg-white/5"
-              href={downloadUrls.windowsUrl}
+            <Link
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-black/10 bg-white px-5 py-3 font-medium text-neutral-900 shadow-sm transition hover:border-black/20"
+              to="/auth?mode=signup"
             >
-              Windows Download
+              Create account
               <ArrowRight className="h-4 w-4" />
-            </a>
-          </div>
-        </motion.div>
-
-        <motion.div
-          animate={{ opacity: 1, scale: 1 }}
-          initial={{ opacity: 0, scale: 0.96 }}
-          transition={{ delay: 0.1, duration: 0.45 }}
-          className="rounded-[2rem] border border-white/10 bg-white/5 p-8 shadow-2xl shadow-amber-500/10 backdrop-blur"
-        >
-          <p className="text-sm uppercase tracking-[0.25em] text-slate-400">
-            Account Lifecycle
-          </p>
-          <div className="mt-6 space-y-4">
-            <Link
-              className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-4 transition hover:border-amber-300/40"
-              to="/login"
-            >
-              <span className="flex items-center gap-3">
-                <LockKeyhole className="h-5 w-5 text-amber-200" />
-                <span>Create account or sign in</span>
-              </span>
-              <ArrowRight className="h-4 w-4 text-slate-400" />
-            </Link>
-            <Link
-              className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-4 transition hover:border-amber-300/40"
-              to="/checkout"
-            >
-              <span className="flex items-center gap-3">
-                <CreditCard className="h-5 w-5 text-amber-200" />
-                <span>Start a 2-day trial</span>
-              </span>
-              <ArrowRight className="h-4 w-4 text-slate-400" />
             </Link>
           </div>
-        </motion.div>
+          <div className="mt-9 grid gap-3 text-sm text-neutral-600 sm:grid-cols-3">
+            {["Supabase auth", "Stripe billing", "GitHub downloads"].map((item) => (
+              <div className="flex items-center gap-2" key={item}>
+                <CheckCircle2 className="h-4 w-4 text-[#236f5a]" />
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+        <ProductPreview />
       </section>
-    </Shell>
+
+      <section className="border-y border-black/10 bg-white" id="download">
+        <div className="mx-auto grid max-w-7xl gap-8 px-5 py-12 sm:px-8 lg:grid-cols-[0.8fr_1.2fr]">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#e55934]">
+              Latest production release
+            </p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-normal text-neutral-950">
+              Download from GitHub Releases
+            </h2>
+            <p className="mt-4 leading-7 text-neutral-600">
+              The website points to production release assets on GitHub so your laptop
+              server stays light and never serves large installers directly.
+            </p>
+            <p className="mt-4 text-sm text-neutral-500">
+              {release
+                ? `Current version ${release.version}, published ${formatDate(release.publishedAt)}.`
+                : releaseError ?? "Loading release metadata..."}
+            </p>
+          </div>
+          <ReleaseDownload release={release} />
+        </div>
+      </section>
+
+      <section className="mx-auto grid max-w-7xl gap-4 px-5 py-12 sm:px-8 md:grid-cols-3">
+        {[
+          {
+            icon: UserRound,
+            title: "1. Create account",
+            text: "Use Supabase email and password authentication for web and desktop access.",
+          },
+          {
+            icon: CreditCard,
+            title: "2. Start trial",
+            text: "Stripe Checkout creates the subscription and syncs access through webhooks.",
+          },
+          {
+            icon: ShieldCheck,
+            title: "3. Sign in on desktop",
+            text: "The desktop app sends its Supabase session to account, update, and log APIs.",
+          },
+        ].map(({ icon: Icon, title, text }) => (
+          <article className="rounded-md border border-black/10 bg-white p-6 shadow-sm" key={title}>
+            <Icon className="h-6 w-6 text-[#236f5a]" />
+            <h3 className="mt-5 text-lg font-semibold">{title}</h3>
+            <p className="mt-3 leading-7 text-neutral-600">{text}</p>
+          </article>
+        ))}
+      </section>
+    </AppShell>
   );
 }
 
-function LoginPage() {
+function AuthPage() {
   const {
     error,
     isAuthenticated,
     isLoading,
     signIn,
     signUp,
-    subscription,
-    user,
   } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const params = new URLSearchParams(location.search);
+  const requestedMode = params.get("mode") === "signup" ? "signup" : "signin";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">(requestedMode);
   const [formError, setFormError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    setMode(requestedMode);
+  }, [requestedMode]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate("/account", { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
+    setNotice(null);
     setIsSubmitting(true);
 
     try {
       if (mode === "signup") {
         await signUp({ email, password });
+        setNotice("Account created. Check your inbox if Supabase email confirmation is enabled.");
       } else {
         await signIn({ email, password });
+        navigate("/account", { replace: true });
       }
     } catch (submitError) {
       setFormError(
@@ -218,113 +397,133 @@ function LoginPage() {
   }
 
   return (
-    <Shell>
-      <section className="flex flex-1 items-center justify-center py-16">
-        <div className="w-full max-w-xl rounded-[2rem] border border-white/10 bg-white/5 p-8 backdrop-blur">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm uppercase tracking-[0.25em] text-amber-200/80">
-                /login
-              </p>
-              <h2 className="mt-4 font-serif text-4xl text-white">Supabase Auth</h2>
-            </div>
-            <div className="rounded-full border border-white/10 bg-slate-950/40 p-1">
-              <button
-                className={`rounded-full px-4 py-2 text-sm transition ${
-                  mode === "signin" ? "bg-amber-300 text-slate-950" : "text-slate-300"
-                }`}
-                onClick={() => setMode("signin")}
-                type="button"
-              >
-                Sign in
-              </button>
-              <button
-                className={`rounded-full px-4 py-2 text-sm transition ${
-                  mode === "signup" ? "bg-amber-300 text-slate-950" : "text-slate-300"
-                }`}
-                onClick={() => setMode("signup")}
-                type="button"
-              >
-                Sign up
-              </button>
-            </div>
+    <AppShell>
+      <section className="mx-auto grid min-h-[calc(100vh-73px)] max-w-6xl items-center gap-10 px-5 py-12 sm:px-8 lg:grid-cols-[0.8fr_1fr]">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#236f5a]">
+            Account access
+          </p>
+          <h1 className="mt-4 text-4xl font-semibold tracking-normal text-neutral-950 sm:text-5xl">
+            One login for the website and desktop app.
+          </h1>
+          <p className="mt-5 max-w-xl leading-8 text-neutral-600">
+            Your Supabase session is the desktop authentication source. The app uses
+            that session for account checks, production updates, and best-effort logs.
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-black/10 bg-white p-6 shadow-sm sm:p-8">
+          <div className="mb-6 grid grid-cols-2 gap-2 rounded-md bg-neutral-100 p-1">
+            <button
+              className={`rounded px-4 py-2 text-sm font-medium transition ${
+                mode === "signin" ? "bg-white shadow-sm" : "text-neutral-600"
+              }`}
+              onClick={() => setMode("signin")}
+              type="button"
+            >
+              Sign in
+            </button>
+            <button
+              className={`rounded px-4 py-2 text-sm font-medium transition ${
+                mode === "signup" ? "bg-white shadow-sm" : "text-neutral-600"
+              }`}
+              onClick={() => setMode("signup")}
+              type="button"
+            >
+              Sign up
+            </button>
           </div>
 
-          {isAuthenticated ? (
-            <div className="mt-8 rounded-3xl border border-emerald-400/20 bg-emerald-500/10 p-6">
-              <div className="flex items-center gap-3">
-                <UserRound className="h-5 w-5 text-emerald-200" />
-                <div>
-                  <p className="text-sm text-emerald-100">Authenticated</p>
-                  <p className="text-lg text-white">{user?.email ?? "Unknown email"}</p>
-                </div>
+          <form className="space-y-5" onSubmit={handleSubmit}>
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-neutral-700">Email</span>
+              <input
+                autoComplete="email"
+                className="w-full rounded-md border border-black/10 bg-white px-4 py-3 outline-none transition placeholder:text-neutral-400 focus:border-[#236f5a]"
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@downloadsecondbrain.com"
+                required
+                type="email"
+                value={email}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-neutral-700">
+                Password
+              </span>
+              <input
+                autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                className="w-full rounded-md border border-black/10 bg-white px-4 py-3 outline-none transition placeholder:text-neutral-400 focus:border-[#236f5a]"
+                minLength={8}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="At least 8 characters"
+                required
+                type="password"
+                value={password}
+              />
+            </label>
+
+            {notice ? (
+              <div className="rounded-md border border-[#236f5a]/20 bg-[#236f5a]/10 px-4 py-3 text-sm text-[#1d5d4c]">
+                {notice}
               </div>
-              <p className="mt-4 text-sm text-slate-200">
-                Subscription status: {subscription?.status ?? "No subscription row yet"}
-              </p>
-              <Link
-                className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 font-medium text-slate-950 transition hover:bg-slate-200"
-                to="/checkout"
-              >
-                Continue to checkout
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </div>
-          ) : (
-            <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
-              <label className="block">
-                <span className="mb-2 block text-sm text-slate-300">Email</span>
-                <input
-                  autoComplete="email"
-                  className="w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-amber-300/50"
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="you@downloadsecondbrain.com"
-                  type="email"
-                  value={email}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-2 block text-sm text-slate-300">Password</span>
-                <input
-                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-amber-300/50"
-                  minLength={8}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="At least 8 characters"
-                  type="password"
-                  value={password}
-                />
-              </label>
+            ) : null}
 
-              {formError || error ? (
-                <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-                  {formError ?? error}
-                </div>
-              ) : null}
+            {formError || error ? (
+              <div className="rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
+                {formError ?? error}
+              </div>
+            ) : null}
 
-              <button
-                className="inline-flex w-full items-center justify-center rounded-full bg-amber-300 px-5 py-3 font-medium text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-70"
-                disabled={isLoading || isSubmitting}
-                type="submit"
-              >
-                {isSubmitting
-                  ? "Submitting..."
-                  : mode === "signup"
-                    ? "Create account"
-                    : "Sign in"}
-              </button>
-            </form>
-          )}
+            <button
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#236f5a] px-5 py-3 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c] disabled:cursor-not-allowed disabled:opacity-70"
+              disabled={isLoading || isSubmitting}
+              type="submit"
+            >
+              {isSubmitting
+                ? "Submitting..."
+                : mode === "signup"
+                  ? "Create account"
+                  : "Sign in"}
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </form>
         </div>
       </section>
-    </Shell>
+    </AppShell>
   );
 }
 
-function CheckoutCard() {
-  const { accessToken, error, isSubscribed, isTrialActive, subscription, user } = useAuth();
+function StatusPill({ label, tone }: { label: string; tone: "green" | "orange" | "neutral" }) {
+  const styles = {
+    green: "border-[#236f5a]/20 bg-[#236f5a]/10 text-[#1d5d4c]",
+    neutral: "border-black/10 bg-neutral-100 text-neutral-700",
+    orange: "border-[#e55934]/20 bg-[#e55934]/10 text-[#9f321c]",
+  };
+
+  return (
+    <span className={`inline-flex rounded-full border px-3 py-1 text-sm font-medium ${styles[tone]}`}>
+      {label}
+    </span>
+  );
+}
+
+function AccountPage() {
+  const {
+    accessToken,
+    error,
+    hasAccessBlocked,
+    isAuthenticated,
+    isLoading,
+    isSubscribed,
+    isTrialActive,
+    subscription,
+    user,
+  } = useAuth();
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
+  const [release, setRelease] = useState<LatestRelease | null>(null);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
   const location = useLocation();
 
   const statusLabel = useMemo(() => {
@@ -333,11 +532,13 @@ function CheckoutCard() {
     }
 
     if (isTrialActive) {
-      return "Trial running";
+      return "Trial active";
     }
 
     return "No active subscription";
   }, [isSubscribed, isTrialActive]);
+
+  const statusTone = isSubscribed || isTrialActive ? "green" : hasAccessBlocked ? "orange" : "neutral";
 
   useEffect(() => {
     const stripeKey = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
@@ -347,9 +548,31 @@ function CheckoutCard() {
     }
   }, []);
 
-  async function handleStartTrial() {
-    if (!user?.id || !user.email || !accessToken) {
-      setCheckoutError("Your session is incomplete. Sign in again before checkout.");
+  useEffect(() => {
+    let active = true;
+
+    void fetchLatestRelease()
+      .then((nextRelease) => {
+        if (active) {
+          setRelease(nextRelease);
+        }
+      })
+      .catch((nextError) => {
+        if (active) {
+          setReleaseError(
+            nextError instanceof Error ? nextError.message : "Unable to load downloads.",
+          );
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function handleStartCheckout() {
+    if (!accessToken) {
+      setCheckoutError("Sign in again before checkout.");
       return;
     }
 
@@ -360,22 +583,19 @@ function CheckoutCard() {
       const response = await fetch("/api/create-checkout-session", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`,
-          "x-supabase-user-email": user.email,
-          "x-supabase-user-id": user.id,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({}),
       });
-
       const payload = await response.json();
 
       if (!response.ok) {
-        const message =
+        throw new Error(
           payload && typeof payload.error === "string"
             ? payload.error
-            : "Unable to create checkout session.";
-        throw new Error(message);
+            : "Unable to create checkout session.",
+        );
       }
 
       const { url } = checkoutSessionSchema.parse(payload);
@@ -391,111 +611,155 @@ function CheckoutCard() {
     }
   }
 
-  return (
-    <Shell>
-      <section className="flex flex-1 items-center justify-center py-16">
-        <div className="w-full max-w-2xl rounded-[2rem] border border-white/10 bg-white/5 p-8 backdrop-blur">
-          <div className="flex flex-col gap-3 border-b border-white/10 pb-6 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.25em] text-amber-200/80">
-                /checkout
-              </p>
-              <h2 className="mt-4 font-serif text-4xl text-white">Stripe Subscription</h2>
-            </div>
-            <div className="rounded-full border border-white/10 bg-slate-950/40 px-4 py-2 text-sm text-slate-200">
-              {statusLabel}
-            </div>
-          </div>
-
-          <div className="mt-8 grid gap-4 md:grid-cols-2">
-            <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-5">
-              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">
-                Account
-              </p>
-              <p className="mt-3 text-lg text-white">{user?.email ?? "Unknown user"}</p>
-              <p className="mt-2 text-sm text-slate-300">
-                Supabase user ID: {user?.id ?? "Unavailable"}
-              </p>
-            </div>
-            <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-5">
-              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">
-                Trial window
-              </p>
-              <p className="mt-3 text-lg text-white">
-                {subscription?.status ?? "No subscription"}
-              </p>
-              <p className="mt-2 text-sm text-slate-300">
-                Start: {formatDate(subscription?.trial_start ?? null)}
-              </p>
-              <p className="mt-1 text-sm text-slate-300">
-                End: {formatDate(subscription?.trial_end ?? null)}
-              </p>
-            </div>
-          </div>
-
-          {location.search.includes("success=1") ? (
-            <div className="mt-6 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-              Checkout completed. Stripe will sync the subscription row via webhook shortly.
-            </div>
-          ) : null}
-
-          {location.search.includes("canceled=1") ? (
-            <div className="mt-6 rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-              Checkout was canceled before completion.
-            </div>
-          ) : null}
-
-          {checkoutError || error ? (
-            <div className="mt-6 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-              {checkoutError ?? error}
-            </div>
-          ) : null}
-
-          <button
-            className="mt-8 inline-flex items-center justify-center gap-2 rounded-full bg-amber-300 px-6 py-3 font-medium text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-70"
-            disabled={isStartingCheckout}
-            onClick={() => {
-              void handleStartTrial();
-            }}
-            type="button"
-          >
-            <CreditCard className="h-4 w-4" />
-            {isStartingCheckout ? "Redirecting..." : "Start 2-Day Free Trial"}
-          </button>
-        </div>
-      </section>
-    </Shell>
-  );
-}
-
-function CheckoutPage() {
-  const { isAuthenticated, isLoading } = useAuth();
-
   if (isLoading) {
     return (
-      <Shell>
-        <section className="flex flex-1 items-center justify-center py-16">
-          <div className="rounded-3xl border border-white/10 bg-white/5 px-6 py-4 text-slate-200">
-            Loading account state...
+      <AppShell>
+        <section className="mx-auto grid min-h-[calc(100vh-73px)] max-w-4xl place-items-center px-5 sm:px-8">
+          <div className="rounded-md border border-black/10 bg-white px-5 py-4 shadow-sm">
+            Loading account...
           </div>
         </section>
-      </Shell>
+      </AppShell>
     );
   }
 
   if (!isAuthenticated) {
-    return <Navigate replace to="/login" />;
+    return <Navigate replace to="/auth" />;
   }
 
-  return <CheckoutCard />;
+  return (
+    <AppShell>
+      <section className="mx-auto max-w-7xl px-5 py-10 sm:px-8">
+        <div className="flex flex-col gap-4 border-b border-black/10 pb-8 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#236f5a]">
+              Account
+            </p>
+            <h1 className="mt-3 text-4xl font-semibold tracking-normal text-neutral-950">
+              {user?.email ?? "Signed in"}
+            </h1>
+          </div>
+          <StatusPill label={statusLabel} tone={statusTone} />
+        </div>
+
+        {location.search.includes("checkout=success") ? (
+          <div className="mt-6 rounded-md border border-[#236f5a]/20 bg-[#236f5a]/10 px-4 py-3 text-sm text-[#1d5d4c]">
+            Checkout completed. Stripe will sync subscription access shortly.
+          </div>
+        ) : null}
+
+        {location.search.includes("checkout=canceled") ? (
+          <div className="mt-6 rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
+            Checkout was canceled before completion.
+          </div>
+        ) : null}
+
+        {checkoutError || error ? (
+          <div className="mt-6 rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
+            {checkoutError ?? error}
+          </div>
+        ) : null}
+
+        <div className="mt-8 grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
+          <section className="rounded-lg border border-black/10 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold">Subscription</h2>
+                <p className="mt-2 text-sm leading-6 text-neutral-600">
+                  Stripe manages billing. Supabase stores the access state consumed by
+                  the website and desktop app.
+                </p>
+              </div>
+              <CreditCard className="h-6 w-6 text-[#236f5a]" />
+            </div>
+            <dl className="mt-6 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-md bg-neutral-100 p-4">
+                <dt className="text-sm text-neutral-500">Status</dt>
+                <dd className="mt-1 font-medium">{subscription?.status ?? "none"}</dd>
+              </div>
+              <div className="rounded-md bg-neutral-100 p-4">
+                <dt className="text-sm text-neutral-500">Trial ends</dt>
+                <dd className="mt-1 font-medium">{formatDate(subscription?.trial_end)}</dd>
+              </div>
+            </dl>
+            <button
+              className="mt-6 inline-flex items-center justify-center gap-2 rounded-md bg-[#236f5a] px-5 py-3 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c] disabled:cursor-not-allowed disabled:opacity-70"
+              disabled={isStartingCheckout}
+              onClick={() => {
+                void handleStartCheckout();
+              }}
+              type="button"
+            >
+              <CreditCard className="h-4 w-4" />
+              {isStartingCheckout ? "Redirecting..." : "Start 2-day trial"}
+            </button>
+          </section>
+
+          <section className="rounded-lg border border-black/10 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold">Desktop authentication</h2>
+                <p className="mt-2 text-sm leading-6 text-neutral-600">
+                  Sign in inside the desktop app with this same email and password.
+                  Desktop API calls use the Supabase session bearer token.
+                </p>
+              </div>
+              <KeyRound className="h-6 w-6 text-[#236f5a]" />
+            </div>
+            <div className="mt-6 rounded-md bg-[#111827] p-4 font-mono text-sm text-white">
+              <div>GET /api/desktop/account</div>
+              <div className="mt-2 text-white/60">Authorization: Bearer &lt;supabase_access_token&gt;</div>
+            </div>
+            <p className="mt-4 text-sm leading-6 text-neutral-600">
+              Logs go to <span className="font-mono">POST /api/desktop/logs</span> in small
+              redacted batches and are best-effort only.
+            </p>
+          </section>
+        </div>
+
+        <section className="mt-5 rounded-lg border border-black/10 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold">Downloads and updates</h2>
+              <p className="mt-2 text-sm leading-6 text-neutral-600">
+                Installers redirect to GitHub assets. Update checks compare against the
+                latest production tag.
+              </p>
+            </div>
+            {release?.htmlUrl ? (
+              <a
+                className="inline-flex items-center gap-2 text-sm font-medium text-[#236f5a]"
+                href={release.htmlUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                View release
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            ) : null}
+          </div>
+          {releaseError ? (
+            <div className="rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
+              {releaseError}
+            </div>
+          ) : (
+            <ReleaseDownload release={release} />
+          )}
+        </section>
+      </section>
+    </AppShell>
+  );
 }
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/checkout" element={<CheckoutPage />} />
+      <Route path="/auth" element={<AuthPage />} />
+      <Route path="/account" element={<AccountPage />} />
+      <Route path="/login" element={<Navigate replace to="/auth" />} />
+      <Route path="/checkout" element={<Navigate replace to="/account" />} />
+      <Route path="*" element={<Navigate replace to="/" />} />
     </Routes>
   );
 }

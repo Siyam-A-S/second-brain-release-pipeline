@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { supabase, type SubscriptionRow } from "../lib/supabase";
+import { isSupabaseConfigured, supabase, type SubscriptionRow } from "../lib/supabase";
 
 type AuthCredentials = {
   email: string;
@@ -44,6 +44,12 @@ function hasPaidAccess(subscription: SubscriptionRow | null) {
 }
 
 async function fetchSubscription(userId: string) {
+  if (!supabase) {
+    throw new Error(
+      "Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
+    );
+  }
+
   const { data, error } = await supabase
     .from("subscriptions")
     .select(
@@ -70,7 +76,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let isMounted = true;
 
     async function hydrate() {
-      const { data, error: sessionError } = await supabase.auth.getSession();
+      if (!supabase || !isSupabaseConfigured) {
+        setError(
+          "Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      const supabaseClient = supabase;
+      const { data, error: sessionError } = await supabaseClient.auth.getSession();
 
       if (!isMounted) {
         return;
@@ -110,9 +125,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     void hydrate();
 
+    if (!supabase) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    const supabaseClient = supabase;
     const {
       data: { subscription: authSubscription },
-    } = supabase.auth.onAuthStateChange((_, nextSession) => {
+    } = supabaseClient.auth.onAuthStateChange((_, nextSession) => {
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
       setError(null);
@@ -156,6 +178,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signUp({ email, password }: AuthCredentials) {
     setError(null);
 
+    if (!supabase) {
+      const missingConfigError = new Error(
+        "Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
+      );
+      setError(missingConfigError.message);
+      throw missingConfigError;
+    }
+
     const { error: signUpError } = await supabase.auth.signUp({
       email,
       password,
@@ -170,6 +200,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signIn({ email, password }: AuthCredentials) {
     setError(null);
 
+    if (!supabase) {
+      const missingConfigError = new Error(
+        "Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
+      );
+      setError(missingConfigError.message);
+      throw missingConfigError;
+    }
+
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -183,6 +221,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() {
     setError(null);
+
+    if (!supabase) {
+      setSubscription(null);
+      return;
+    }
 
     const { error: signOutError } = await supabase.auth.signOut();
 
