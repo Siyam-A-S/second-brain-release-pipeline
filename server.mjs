@@ -57,19 +57,28 @@ const contentTypes = {
 
 const desktopLogBodySchema = z.object({
   appVersion: z.string().max(80).optional(),
+  arch: z.string().max(40).optional(),
   buildChannel: z.string().max(40).optional(),
+  channel: z.string().max(40).optional(),
   deviceId: z.string().max(120).optional(),
+  platform: z.string().max(40).optional(),
   events: z
     .array(
       z
         .object({
-          event: z.string().max(120),
-          level: z.enum(["debug", "info", "warn", "error"]).default("info"),
+          detail: z.record(z.string(), z.unknown()).optional(),
+          event: z.string().max(120).optional(),
+          level: z.enum(["debug", "info", "warn", "error"]).default("info").optional(),
           message: z.string().max(2000).optional(),
           metadata: z.record(z.string(), z.unknown()).optional(),
           occurredAt: z.string().datetime().optional(),
+          timestamp: z.string().datetime().optional(),
+          type: z.string().max(120).optional(),
         })
-        .passthrough(),
+        .passthrough()
+        .refine((event) => event.event || event.type, {
+          message: "Each log event requires event or type.",
+        }),
     )
     .min(1),
 });
@@ -182,7 +191,7 @@ async function fetchSubscription(userId) {
   const { data, error } = await supabaseAdmin
     .from("subscriptions")
     .select(
-      "user_id, stripe_customer_id, stripe_subscription_id, status, trial_start, trial_end",
+      "user_id, stripe_customer_id, stripe_subscription_id, status, trial_start, trial_end, plan_name, subscription_renews_at, usage_period_start, usage_period_end, usage_requests, usage_request_limit, updated_at",
     )
     .eq("user_id", userId)
     .maybeSingle();
@@ -194,19 +203,73 @@ async function fetchSubscription(userId) {
   return data;
 }
 
-function getAccessState(subscription) {
+function toIsoFromStripeTimestamp(timestamp) {
+  return timestamp ? new Date(timestamp * 1000).toISOString() : null;
+}
+
+function getStripeCurrentPeriodEnd(subscription) {
+  if (subscription.current_period_end) {
+    return toIsoFromStripeTimestamp(subscription.current_period_end);
+  }
+
+  const itemPeriodEnd = subscription.items?.data?.find((item) => item.current_period_end)
+    ?.current_period_end;
+  return toIsoFromStripeTimestamp(itemPeriodEnd);
+}
+
+function getStripePlanName(subscription) {
+  const firstItem = subscription.items?.data?.[0];
+  const nickname = firstItem?.price?.nickname;
+
+  if (nickname) {
+    return nickname;
+  }
+
+  const product = firstItem?.price?.product;
+
+  if (product && typeof product === "object" && "name" in product) {
+    return product.name;
+  }
+
+  return "Second Brain Pro";
+}
+
+function getDesktopAccountStatus(subscription) {
   const status = subscription?.status || null;
   const trialEndMs = subscription?.trial_end
     ? new Date(subscription.trial_end).getTime()
     : 0;
   const trialActive = Boolean(trialEndMs && trialEndMs > Date.now());
-  const subscribed = status === "active" || status === "trialing";
+
+  if (status === "trialing" || trialActive) {
+    return "trialing";
+  }
+
+  if (status === "active" || status === "past_due" || status === "canceled") {
+    return status;
+  }
+
+  return "expired";
+}
+
+function getDefaultUsagePeriod(now = new Date()) {
+  const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 
   return {
-    allowed: subscribed || trialActive,
-    status: status || "none",
-    subscribed,
-    trialActive,
+    periodEnd: periodEnd.toISOString(),
+    periodStart: periodStart.toISOString(),
+  };
+}
+
+function toDesktopUsage(subscription) {
+  const defaults = getDefaultUsagePeriod();
+
+  return {
+    periodEnd: subscription?.usage_period_end || defaults.periodEnd,
+    periodStart: subscription?.usage_period_start || defaults.periodStart,
+    requestLimit: Number(subscription?.usage_request_limit ?? 1000),
+    requests: Number(subscription?.usage_requests ?? 0),
   };
 }
 
@@ -230,8 +293,14 @@ async function getOrCreateCustomer(userId, email) {
       stripe_customer_id: customer.id,
       status: subscription?.status || null,
       stripe_subscription_id: subscription?.stripe_subscription_id || null,
+      plan_name: subscription?.plan_name || "Second Brain Pro",
+      subscription_renews_at: subscription?.subscription_renews_at || null,
       trial_end: subscription?.trial_end || null,
       trial_start: subscription?.trial_start || null,
+      usage_period_end: subscription?.usage_period_end || null,
+      usage_period_start: subscription?.usage_period_start || null,
+      usage_request_limit: subscription?.usage_request_limit || 1000,
+      usage_requests: subscription?.usage_requests || 0,
     },
     { onConflict: "user_id" },
   );
@@ -318,13 +387,12 @@ async function upsertSubscriptionFromStripe(subscription) {
       typeof subscription.customer === "string" ? subscription.customer : null,
     stripe_subscription_id: subscription.id,
     status: subscription.status,
-    trial_start: subscription.trial_start
-      ? new Date(subscription.trial_start * 1000).toISOString()
-      : null,
-    trial_end: subscription.trial_end
-      ? new Date(subscription.trial_end * 1000).toISOString()
-      : null,
+    plan_name: getStripePlanName(subscription),
+    subscription_renews_at: getStripeCurrentPeriodEnd(subscription),
+    trial_start: toIsoFromStripeTimestamp(subscription.trial_start),
+    trial_end: toIsoFromStripeTimestamp(subscription.trial_end),
     updated_at: new Date().toISOString(),
+    usage_request_limit: 1000,
   };
 
   const { error } = await supabaseAdmin.from("subscriptions").upsert(payload, {
@@ -596,16 +664,17 @@ async function handleDesktopAccount(req, res, requestId) {
       fetchSubscription(user.id),
       getLatestProductionRelease().catch(() => null),
     ]);
-    const access = getAccessState(subscription);
 
     sendJson(res, 200, {
-      account: {
-        access,
-        email: user.email || null,
-        subscription,
-        userId: user.id,
-      },
+      email: user.email || null,
+      lastVerifiedAt: new Date().toISOString(),
+      planName: subscription?.plan_name || "Second Brain Pro",
       release: release ? toPublicRelease(release) : null,
+      status: getDesktopAccountStatus(subscription),
+      subscriptionRenewsAt: subscription?.subscription_renews_at || null,
+      trialEndsAt: subscription?.trial_end || null,
+      usage: toDesktopUsage(subscription),
+      userId: user.id,
     }, requestId);
   } catch (error) {
     sendJson(res, error.statusCode || 500, {
@@ -614,13 +683,13 @@ async function handleDesktopAccount(req, res, requestId) {
   }
 }
 
-function getLogRateKey(userId) {
+function getLogRateKey(userId, deviceId) {
   const windowId = Math.floor(Date.now() / 60000);
-  return `${userId}:${windowId}`;
+  return `${userId}:${deviceId || "unknown-device"}:${windowId}`;
 }
 
-function assertLogRateLimit(userId) {
-  const key = getLogRateKey(userId);
+function assertLogRateLimit(userId, deviceId) {
+  const key = getLogRateKey(userId, deviceId);
   const nextCount = (logRateLimit.get(key) || 0) + 1;
   logRateLimit.set(key, nextCount);
 
@@ -643,7 +712,9 @@ function redactValue(value) {
   if (typeof value === "string") {
     return value
       .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
-      .replace(/(access[_-]?token|refresh[_-]?token|api[_-]?key|password)=([^&\s]+)/gi, "$1=[redacted]")
+      .replace(/(access[_-]?token|refresh[_-]?token|api[_-]?key|password|secret)\s*[:=]\s*([^&\s,}]+)/gi, "$1=[redacted]")
+      .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
+      .replace(/\b(sk|pk|whsec)_(test|live)_[A-Za-z0-9_]+/gi, "[redacted-secret]")
       .replace(/[A-Z]:\\Users\\[^\\\s]+/gi, "[redacted-path]")
       .replace(/\/home\/[^/\s]+/gi, "[redacted-path]")
       .slice(0, 2000);
@@ -671,19 +742,21 @@ function redactValue(value) {
 async function handleDesktopLogs(req, res, requestId) {
   try {
     const user = await authenticateSupabaseRequest(req);
-    assertLogRateLimit(user.id);
-
     const payload = desktopLogBodySchema.parse(await readJson(req, env.LOG_MAX_BYTES));
+    assertLogRateLimit(user.id, payload.deviceId);
+
     const events = payload.events.slice(0, env.LOG_BATCH_MAX);
     const rows = events.map((event) => ({
       app_version: payload.appVersion || null,
-      build_channel: payload.buildChannel || null,
+      arch: payload.arch || null,
+      build_channel: payload.channel || payload.buildChannel || null,
       device_id: payload.deviceId || null,
-      event_name: event.event,
-      level: event.level,
+      event_name: event.type || event.event,
+      level: event.level || "info",
       message: event.message ? redactValue(event.message) : null,
-      metadata: redactValue(event.metadata || {}),
-      occurred_at: event.occurredAt || new Date().toISOString(),
+      metadata: redactValue(event.detail || event.metadata || {}),
+      occurred_at: event.timestamp || event.occurredAt || new Date().toISOString(),
+      platform: payload.platform || null,
       request_id: requestId,
       user_id: user.id,
     }));

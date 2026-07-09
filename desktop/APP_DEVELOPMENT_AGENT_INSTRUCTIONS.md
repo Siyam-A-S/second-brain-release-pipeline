@@ -36,6 +36,27 @@ Authorization: Bearer <supabase access token>
 GET https://www.downloadsecondbrain.com/api/desktop/account
 ```
 
+- Account status returns flat fields:
+
+```json
+{
+  "email": "user@example.com",
+  "userId": "supabase-user-id",
+  "status": "trialing",
+  "planName": "Second Brain Pro",
+  "trialEndsAt": "2026-08-01T00:00:00.000Z",
+  "subscriptionRenewsAt": null,
+  "usage": {
+    "periodStart": "2026-07-01T00:00:00.000Z",
+    "periodEnd": "2026-08-01T00:00:00.000Z",
+    "requests": 0,
+    "requestLimit": 1000
+  },
+  "lastVerifiedAt": "2026-07-09T00:00:00.000Z"
+}
+```
+
+- Treat `signed_out`, `trialing`, `active`, `past_due`, `canceled`, and `expired` as the account state set.
 - Update checks must call:
 
 ```text
@@ -46,6 +67,29 @@ GET https://www.downloadsecondbrain.com/api/updates/:platform/:currentVersion
 
 ```text
 POST https://www.downloadsecondbrain.com/api/desktop/logs
+```
+
+- Diagnostics upload body:
+
+```json
+{
+  "appVersion": "0.1.5",
+  "channel": "production",
+  "platform": "win32",
+  "arch": "x64",
+  "deviceId": "stable-client-id",
+  "events": [
+    {
+      "timestamp": "2026-07-09T00:00:00.000Z",
+      "type": "chat.proxy_failure",
+      "message": "redacted summary",
+      "detail": {
+        "requestId": "request-id",
+        "status": 502
+      }
+    }
+  ]
+}
 ```
 
 - Download buttons or links may open:

@@ -35,15 +35,43 @@ Authorization: Bearer <supabase_access_token>
 `GET /api/desktop/account`
 - Requires Supabase bearer token.
 - Return:
-  - `account.userId`
-  - `account.email`
-  - `account.subscription`
-  - `account.access.allowed`
-  - `account.access.status`
-  - `account.access.subscribed`
-  - `account.access.trialActive`
+  - `email`
+  - `userId`
+  - `status`
+  - `planName`
+  - `trialEndsAt`
+  - `subscriptionRenewsAt`
+  - `usage.periodStart`
+  - `usage.periodEnd`
+  - `usage.requests`
+  - `usage.requestLimit`
+  - `lastVerifiedAt`
   - `release`
-- Access is allowed when subscription status is `active` or `trialing`, or when `trial_end` is in the future.
+- Allowed status values are `signed_out`, `trialing`, `active`, `past_due`, `canceled`, and `expired`.
+- Authenticated requests without active or trialing access return `expired`, `past_due`, or `canceled` instead of exposing Stripe internals.
+- Do not return Supabase tokens, Stripe IDs, service-role data, passwords, or legacy access keys.
+
+Example response:
+
+```json
+{
+  "email": "user@example.com",
+  "userId": "supabase-user-id",
+  "status": "trialing",
+  "planName": "Second Brain Pro",
+  "trialEndsAt": "2026-08-01T00:00:00.000Z",
+  "subscriptionRenewsAt": null,
+  "usage": {
+    "periodStart": "2026-07-01T00:00:00.000Z",
+    "periodEnd": "2026-08-01T00:00:00.000Z",
+    "requests": 0,
+    "requestLimit": 1000
+  },
+  "lastVerifiedAt": "2026-07-09T00:00:00.000Z",
+  "release": null,
+  "requestId": "request-id"
+}
+```
 
 ## Desktop Logs API
 
@@ -53,25 +81,32 @@ Authorization: Bearer <supabase_access_token>
 
 ```json
 {
-  "appVersion": "1.2.3",
-  "buildChannel": "production",
+  "appVersion": "0.1.5",
+  "channel": "production",
+  "platform": "win32",
+  "arch": "x64",
   "deviceId": "stable-client-id",
   "events": [
     {
-      "event": "chat_failed",
+      "timestamp": "2026-07-09T00:00:00.000Z",
+      "type": "chat.proxy_failure",
       "level": "error",
-      "message": "Something went wrong.",
-      "metadata": {},
-      "occurredAt": "2026-07-04T12:00:00.000Z"
+      "message": "redacted summary",
+      "detail": {
+        "requestId": "request-id",
+        "status": 502
+      }
     }
   ]
 }
 ```
 
 - Enforce `LOG_MAX_BYTES`, `LOG_BATCH_MAX`, and `LOG_RATE_LIMIT_PER_MINUTE`.
+- Rate-limit by user ID and stable device ID when provided.
 - Insert redacted rows into `desktop_log_events`.
 - Return `202` with accepted count when stored.
 - Upload is best-effort from the desktop perspective; desktop workflows must not block on failures.
+- The server accepts the previous `buildChannel`, `event`, `metadata`, and `occurredAt` keys only for compatibility; new desktop work should use `channel`, `type`, `detail`, and `timestamp`.
 
 ## Redaction And Tracing
 

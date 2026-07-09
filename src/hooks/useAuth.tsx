@@ -53,7 +53,7 @@ async function fetchSubscription(userId: string) {
   const { data, error } = await supabase
     .from("subscriptions")
     .select(
-      "user_id, stripe_customer_id, stripe_subscription_id, status, trial_start, trial_end",
+      "user_id, stripe_customer_id, stripe_subscription_id, status, plan_name, subscription_renews_at, trial_start, trial_end, usage_period_start, usage_period_end, usage_requests, usage_request_limit, updated_at",
     )
     .eq("user_id", userId)
     .maybeSingle();

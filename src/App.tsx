@@ -355,8 +355,10 @@ function AuthPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const params = new URLSearchParams(location.search);
+  const isDesktopLogin = params.get("desktop") === "1";
+  const prefilledEmail = params.get("email") ?? "";
   const requestedMode = params.get("mode") === "signup" ? "signup" : "signin";
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(prefilledEmail);
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"signin" | "signup">(requestedMode);
   const [formError, setFormError] = useState<string | null>(null);
@@ -366,6 +368,12 @@ function AuthPage() {
   useEffect(() => {
     setMode(requestedMode);
   }, [requestedMode]);
+
+  useEffect(() => {
+    if (prefilledEmail) {
+      setEmail(prefilledEmail);
+    }
+  }, [prefilledEmail]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -404,7 +412,9 @@ function AuthPage() {
             Account access
           </p>
           <h1 className="mt-4 text-4xl font-semibold tracking-normal text-neutral-950 sm:text-5xl">
-            One login for the website and desktop app.
+            {isDesktopLogin
+              ? "Sign in to connect the desktop app."
+              : "One login for the website and desktop app."}
           </h1>
           <p className="mt-5 max-w-xl leading-8 text-neutral-600">
             Your Supabase session is the desktop authentication source. The app uses
@@ -418,7 +428,9 @@ function AuthPage() {
               className={`rounded px-4 py-2 text-sm font-medium transition ${
                 mode === "signin" ? "bg-white shadow-sm" : "text-neutral-600"
               }`}
-              onClick={() => setMode("signin")}
+              onClick={() => {
+                setMode("signin");
+              }}
               type="button"
             >
               Sign in
@@ -427,12 +439,20 @@ function AuthPage() {
               className={`rounded px-4 py-2 text-sm font-medium transition ${
                 mode === "signup" ? "bg-white shadow-sm" : "text-neutral-600"
               }`}
-              onClick={() => setMode("signup")}
+              onClick={() => {
+                setMode("signup");
+              }}
               type="button"
             >
               Sign up
             </button>
           </div>
+
+          {isDesktopLogin ? (
+            <div className="mb-5 rounded-md border border-[#236f5a]/20 bg-[#236f5a]/10 px-4 py-3 text-sm leading-6 text-[#1d5d4c]">
+              Use the same email and password here and in Second Brain desktop.
+            </div>
+          ) : null}
 
           <form className="space-y-5" onSubmit={handleSubmit}>
             <label className="block">
@@ -678,8 +698,24 @@ function AccountPage() {
                 <dd className="mt-1 font-medium">{subscription?.status ?? "none"}</dd>
               </div>
               <div className="rounded-md bg-neutral-100 p-4">
+                <dt className="text-sm text-neutral-500">Plan</dt>
+                <dd className="mt-1 font-medium">{subscription?.plan_name ?? "Second Brain Pro"}</dd>
+              </div>
+              <div className="rounded-md bg-neutral-100 p-4">
                 <dt className="text-sm text-neutral-500">Trial ends</dt>
                 <dd className="mt-1 font-medium">{formatDate(subscription?.trial_end)}</dd>
+              </div>
+              <div className="rounded-md bg-neutral-100 p-4">
+                <dt className="text-sm text-neutral-500">Renews</dt>
+                <dd className="mt-1 font-medium">{formatDate(subscription?.subscription_renews_at)}</dd>
+              </div>
+              <div className="rounded-md bg-neutral-100 p-4 sm:col-span-2">
+                <dt className="text-sm text-neutral-500">Managed requests</dt>
+                <dd className="mt-1 font-medium">
+                  {subscription
+                    ? `${subscription.usage_requests} / ${subscription.usage_request_limit}`
+                    : "0 / 1000"}
+                </dd>
               </div>
             </dl>
             <button
@@ -757,7 +793,7 @@ export default function App() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/auth" element={<AuthPage />} />
       <Route path="/account" element={<AccountPage />} />
-      <Route path="/login" element={<Navigate replace to="/auth" />} />
+      <Route path="/login" element={<AuthPage />} />
       <Route path="/checkout" element={<Navigate replace to="/account" />} />
       <Route path="*" element={<Navigate replace to="/" />} />
     </Routes>

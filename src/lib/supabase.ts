@@ -5,8 +5,14 @@ export type SubscriptionRow = {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   status: string | null;
+  plan_name: string;
+  subscription_renews_at: string | null;
   trial_start: string | null;
   trial_end: string | null;
+  usage_period_start: string | null;
+  usage_period_end: string | null;
+  usage_requests: number;
+  usage_request_limit: number;
   updated_at?: string;
 };
 
@@ -19,9 +25,11 @@ export type DesktopLogEventRow = {
   message: string | null;
   metadata: Record<string, unknown>;
   app_version: string | null;
+  arch: string | null;
   build_channel: string | null;
   device_id: string | null;
   occurred_at: string;
+  platform: string | null;
   created_at: string;
 };
 
