@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import {
+  Apple,
   ArrowRight,
   CheckCircle2,
   CreditCard,
@@ -8,12 +8,24 @@ import {
   ExternalLink,
   KeyRound,
   LogOut,
+  Menu,
+  Monitor,
   MonitorDown,
   RotateCcw,
   ShieldCheck,
   UserRound,
+  X,
   XCircle,
 } from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type AnchorHTMLAttributes,
+  type ButtonHTMLAttributes,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   Link,
   Navigate,
@@ -56,6 +68,17 @@ const releaseSchema = z.object({
 });
 
 type LatestRelease = z.infer<typeof releaseSchema>["release"];
+type DownloadPlatform = "macos" | "windows";
+type Tone = "accent" | "danger" | "neutral" | "warning";
+type ButtonVariant = "primary" | "secondary";
+
+const containerClass = "mx-auto max-w-[1080px] px-5 sm:px-10";
+const cardClass =
+  "rounded-[14px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]";
+
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
 
 async function fetchLatestRelease() {
   const response = await fetch("/api/releases/latest");
@@ -72,161 +95,7 @@ async function fetchLatestRelease() {
   return releaseSchema.parse(payload).release;
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) {
-    return "Not available";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
-function formatBytes(value: number | null | undefined) {
-  if (!value) {
-    return "";
-  }
-
-  return `${Math.round(value / 1024 / 1024)} MB`;
-}
-
-function AppShell({ children }: { children: ReactNode }) {
-  const { isAuthenticated, signOut, user } = useAuth();
-
-  return (
-    <div className="min-h-screen bg-[#f6f8fb] text-[#171717]">
-      <header className="sticky top-0 z-20 border-b border-black/10 bg-[#f6f8fb]/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4 sm:px-8">
-          <Link className="flex items-center gap-3" to="/">
-            <span className="grid h-9 w-9 place-items-center rounded-md bg-[#171717] text-sm font-semibold text-white">
-              SB
-            </span>
-            <span className="text-sm font-semibold uppercase tracking-[0.18em]">
-              Second Brain
-            </span>
-          </Link>
-
-          <nav className="flex items-center gap-2 text-sm">
-            <Link
-              className="hidden rounded-md px-3 py-2 text-neutral-600 transition hover:bg-white hover:text-neutral-950 sm:inline-flex"
-              to="/#download"
-            >
-              Download
-            </Link>
-            <Link
-              className="rounded-md px-3 py-2 text-neutral-600 transition hover:bg-white hover:text-neutral-950"
-              to={isAuthenticated ? "/account" : "/auth"}
-            >
-              {isAuthenticated ? "Account" : "Sign in"}
-            </Link>
-            {isAuthenticated ? (
-              <button
-                className="hidden items-center gap-2 rounded-md border border-black/10 bg-white px-3 py-2 text-neutral-700 shadow-sm transition hover:border-black/20 hover:text-neutral-950 sm:inline-flex"
-                onClick={() => {
-                  void signOut();
-                }}
-                type="button"
-              >
-                <LogOut className="h-4 w-4" />
-                {user?.email ?? "Sign out"}
-              </button>
-            ) : (
-              <Link
-                className="inline-flex items-center gap-2 rounded-md bg-[#236f5a] px-4 py-2 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c]"
-                to="/auth?mode=signup"
-              >
-                Create account
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            )}
-          </nav>
-        </div>
-      </header>
-
-      <main>{children}</main>
-    </div>
-  );
-}
-
-function ReleaseDownload({ release }: { release: LatestRelease | null }) {
-  const windows = release?.assets.windows;
-  const macos = release?.assets.macos;
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <a
-        className={`group flex min-h-24 items-center justify-between rounded-md border border-black/10 bg-white px-5 py-4 shadow-sm transition ${
-          windows ? "hover:-translate-y-0.5 hover:border-[#236f5a]/50" : "pointer-events-none opacity-60"
-        }`}
-        href={windows?.url ?? "#"}
-      >
-        <span>
-          <span className="block font-medium">Windows installer</span>
-          <span className="mt-1 block text-sm text-neutral-500">
-            {windows ? `${windows.name} ${formatBytes(windows.size)}` : "Coming soon"}
-          </span>
-        </span>
-        <Download className="h-5 w-5 text-[#236f5a] transition group-hover:translate-y-0.5" />
-      </a>
-      <a
-        className={`group flex min-h-24 items-center justify-between rounded-md border border-black/10 bg-white px-5 py-4 shadow-sm transition ${
-          macos ? "hover:-translate-y-0.5 hover:border-[#236f5a]/50" : "pointer-events-none opacity-60"
-        }`}
-        href={macos?.url ?? "#"}
-      >
-        <span>
-          <span className="block font-medium">macOS Apple Silicon</span>
-          <span className="mt-1 block text-sm text-neutral-500">
-            {macos ? `${macos.name} ${formatBytes(macos.size)}` : "Coming soon"}
-          </span>
-        </span>
-        <Download className="h-5 w-5 text-[#236f5a] transition group-hover:translate-y-0.5" />
-      </a>
-    </div>
-  );
-}
-
-function ProductPreview() {
-  return (
-    <div className="relative overflow-hidden rounded-lg border border-black/10 bg-[#111827] p-4 shadow-2xl shadow-black/20">
-      <div className="mb-4 flex items-center justify-between border-b border-white/10 pb-3">
-        <div className="flex gap-2">
-          <span className="h-3 w-3 rounded-full bg-[#e55934]" />
-          <span className="h-3 w-3 rounded-full bg-[#f7c948]" />
-          <span className="h-3 w-3 rounded-full bg-[#46b58a]" />
-        </div>
-        <span className="text-xs text-white/50">Second Brain desktop</span>
-      </div>
-      <div className="grid min-h-[330px] gap-4 md:grid-cols-[0.8fr_1.2fr]">
-        <div className="space-y-3 rounded-md bg-white/5 p-4">
-          {["Research", "Invoices", "Meeting notes", "Local archive"].map((label, index) => (
-            <div
-              className={`h-11 rounded-md ${
-                index === 0 ? "bg-[#46b58a]/25" : "bg-white/10"
-              }`}
-              key={label}
-            />
-          ))}
-        </div>
-        <div className="rounded-md bg-[#f6f8fb] p-5">
-          <div className="mb-5 h-7 w-2/3 rounded bg-neutral-900/80" />
-          <div className="space-y-3">
-            <div className="h-4 w-full rounded bg-neutral-300" />
-            <div className="h-4 w-11/12 rounded bg-neutral-300" />
-            <div className="h-4 w-8/12 rounded bg-neutral-300" />
-          </div>
-          <div className="mt-8 grid grid-cols-2 gap-3">
-            <div className="h-24 rounded-md border border-black/10 bg-white" />
-            <div className="h-24 rounded-md border border-black/10 bg-white" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function LandingPage() {
+function useLatestRelease() {
   const [release, setRelease] = useState<LatestRelease | null>(null);
   const [releaseError, setReleaseError] = useState<string | null>(null);
 
@@ -252,95 +121,621 @@ function LandingPage() {
     };
   }, []);
 
+  return { release, releaseError };
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) {
+    return "Not available";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function formatBytes(value: number | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  return `${Math.round(value / 1024 / 1024)} MB`;
+}
+
+function detectPlatform(): DownloadPlatform | null {
+  if (typeof navigator === "undefined") {
+    return null;
+  }
+
+  const fingerprint = `${navigator.platform || ""} ${navigator.userAgent || ""}`.toLowerCase();
+
+  if (fingerprint.includes("mac")) {
+    return "macos";
+  }
+
+  if (fingerprint.includes("win")) {
+    return "windows";
+  }
+
+  return null;
+}
+
+function getAssetForPlatform(release: LatestRelease | null, platform: DownloadPlatform | null) {
+  if (!release || !platform) {
+    return null;
+  }
+
+  return release.assets[platform];
+}
+
+function friendlyAuthError(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const lower = value.toLowerCase();
+
+  if (lower.includes("invalid") || lower.includes("credentials")) {
+    return "That email or password did not match. Try again.";
+  }
+
+  if (lower.includes("already") && (lower.includes("registered") || lower.includes("exists"))) {
+    return "An account already exists for that email. Sign in instead.";
+  }
+
+  if (lower.includes("email") && lower.includes("confirm")) {
+    return "Check your inbox to confirm your email, then sign in.";
+  }
+
+  if (lower.includes("password") && (lower.includes("characters") || lower.includes("least"))) {
+    return "Use a password with at least 8 characters.";
+  }
+
+  if (lower.includes("supabase") || lower.includes("environment")) {
+    return "Account services are not configured yet.";
+  }
+
+  return "Something went wrong. Try again.";
+}
+
+function buttonClasses(variant: ButtonVariant) {
+  return cx(
+    "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+    variant === "primary" &&
+      "bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]",
+    variant === "secondary" &&
+      "border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:border-[var(--text-primary)]",
+  );
+}
+
+function Button({
+  children,
+  className,
+  variant = "primary",
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: ButtonVariant;
+}) {
   return (
-    <AppShell>
-      <section className="mx-auto grid max-w-7xl gap-10 px-5 py-12 sm:px-8 lg:grid-cols-[0.95fr_1.05fr] lg:py-20">
-        <div className="flex flex-col justify-center">
-          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-[#236f5a]">
-            Desktop memory for private work
+    <button className={cx(buttonClasses(variant), className)} {...props}>
+      {children}
+    </button>
+  );
+}
+
+function ButtonLink({
+  children,
+  className,
+  variant = "primary",
+  ...props
+}: AnchorHTMLAttributes<HTMLAnchorElement> & {
+  variant?: ButtonVariant;
+}) {
+  return (
+    <a className={cx(buttonClasses(variant), className)} {...props}>
+      {children}
+    </a>
+  );
+}
+
+function Card({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return <section className={cx(cardClass, "p-5 sm:p-6", className)}>{children}</section>;
+}
+
+function Pill({ children, tone = "neutral" }: { children: ReactNode; tone?: Tone }) {
+  const styles = {
+    accent: "border-transparent bg-[var(--accent-tint)] text-[var(--accent-text-on-tint)]",
+    danger: "border-[var(--danger-border)] bg-[var(--danger-tint)] text-[var(--danger)]",
+    neutral: "border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)]",
+    warning: "border-[var(--warning-border)] bg-[var(--warning-tint)] text-[var(--warning)]",
+  };
+
+  return (
+    <span className={cx("inline-flex rounded-full border px-3 py-1 text-[13px] leading-none", styles[tone])}>
+      {children}
+    </span>
+  );
+}
+
+function InlineMessage({
+  children,
+  tone = "neutral",
+}: {
+  children: ReactNode;
+  tone?: Tone;
+}) {
+  const styles = {
+    accent: "border-[var(--accent-tint)] bg-[var(--accent-tint)] text-[var(--accent-text-on-tint)]",
+    danger: "border-[var(--danger-border)] bg-[var(--danger-tint)] text-[var(--danger)]",
+    neutral: "border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)]",
+    warning: "border-[var(--warning-border)] bg-[var(--warning-tint)] text-[var(--warning)]",
+  };
+
+  return (
+    <div className={cx("rounded-lg border px-4 py-3 text-sm leading-6", styles[tone])}>
+      {children}
+    </div>
+  );
+}
+
+function DataRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 border-t border-[var(--border-subtle)] py-3 first:border-t-0">
+      <dt className="text-sm text-[var(--text-secondary)]">{label}</dt>
+      <dd className="text-right text-sm font-medium text-[var(--text-primary)]">{value}</dd>
+    </div>
+  );
+}
+
+function PriceCard({
+  amount,
+  current = false,
+  features,
+  name,
+}: {
+  amount: string;
+  current?: boolean;
+  features: string[];
+  name: string;
+}) {
+  return (
+    <article
+      className={cx(
+        "rounded-[14px] border bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-card)]",
+        current ? "border-[var(--accent)]" : "border-[var(--border-subtle)]",
+      )}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--text-primary)]">{name}</h3>
+          <p className="mt-2 font-display text-[28px] leading-tight text-[var(--text-primary)]">
+            {amount}
           </p>
-          <h1 className="mt-5 max-w-3xl text-5xl font-semibold leading-[1.02] tracking-normal text-neutral-950 sm:text-7xl">
-            Second Brain
-          </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-neutral-600">
-            Download the desktop app, create an account, and keep subscription access,
-            diagnostics, and production updates in one quiet place.
-          </p>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <a
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-[#236f5a] px-5 py-3 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c]"
-              href="#download"
-            >
-              Download app
-              <MonitorDown className="h-4 w-4" />
+        </div>
+        {current ? <Pill tone="accent">Current</Pill> : null}
+      </div>
+      <ul className="mt-5 space-y-2 text-sm leading-6 text-[var(--text-secondary)]">
+        {features.map((feature) => (
+          <li className="flex gap-2" key={feature}>
+            <CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-[var(--accent)]" />
+            <span>{feature}</span>
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
+}
+
+function SessionRow({
+  action,
+  deviceName,
+  meta,
+  status,
+}: {
+  action?: ReactNode;
+  deviceName: string;
+  meta: string;
+  status: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-t border-[var(--border-subtle)] py-3 first:border-t-0">
+      <div>
+        <p className="text-sm font-medium text-[var(--text-primary)]">{deviceName}</p>
+        <p className="mt-1 text-[13px] text-[var(--text-muted)]">{meta}</p>
+      </div>
+      <div className="flex items-center gap-3">
+        {status}
+        {action}
+      </div>
+    </div>
+  );
+}
+
+function NavBar() {
+  const { isAuthenticated, signOut, user } = useAuth();
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const navLinks = [
+    { href: "/#product", label: "Product" },
+    { href: "/#download", label: "Download" },
+    { href: "/#pricing", label: "Pricing" },
+  ];
+
+  return (
+    <header className="sticky top-0 z-20 border-b border-[var(--border-subtle)] bg-[var(--bg-page)]/90 backdrop-blur">
+      <div className={cx(containerClass, "flex items-center justify-between gap-5 py-4")}>
+        <Link
+          className="flex items-center gap-3 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)]"
+          to="/"
+        >
+          <span className="grid h-9 w-9 place-items-center rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] font-display text-[15px] text-[var(--text-primary)] shadow-[var(--shadow-card)]">
+            Sb
+          </span>
+          <span className="font-display text-[17px] text-[var(--text-primary)]">Second Brain</span>
+        </Link>
+
+        <nav className="hidden items-center gap-7 text-sm font-medium text-[var(--text-nav)] sm:flex">
+          {navLinks.map((link) => (
+            <a className="transition hover:text-[var(--text-primary)]" href={link.href} key={link.href}>
+              {link.label}
             </a>
-            <Link
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-black/10 bg-white px-5 py-3 font-medium text-neutral-900 shadow-sm transition hover:border-black/20"
-              to="/auth?mode=signup"
+          ))}
+        </nav>
+
+        <div className="hidden items-center gap-2 sm:flex">
+          <Link
+            className={cx(buttonClasses("secondary"), "min-h-10 px-3")}
+            to={isAuthenticated ? "/account" : "/auth"}
+          >
+            {isAuthenticated ? "Account" : "Sign in"}
+          </Link>
+          {isAuthenticated ? (
+            <Button
+              className="min-h-10 px-3"
+              onClick={() => {
+                void signOut();
+              }}
+              type="button"
+              variant="secondary"
             >
+              <LogOut className="h-4 w-4" />
+              {user?.email ?? "Sign out"}
+            </Button>
+          ) : (
+            <Link className={cx(buttonClasses("primary"), "min-h-10 px-3")} to="/auth?mode=signup">
               Create account
-              <ArrowRight className="h-4 w-4" />
+            </Link>
+          )}
+        </div>
+
+        <button
+          aria-label={isMenuOpen ? "Close navigation" : "Open navigation"}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)] sm:hidden"
+          onClick={() => setIsMenuOpen((value) => !value)}
+          type="button"
+        >
+          {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
+      </div>
+
+      {isMenuOpen ? (
+        <div className={cx(containerClass, "pb-4 sm:hidden")}>
+          <div className={cx(cardClass, "space-y-2 p-3")}>
+            {navLinks.map((link) => (
+              <a
+                className="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--text-nav)] hover:bg-[var(--accent-tint)] hover:text-[var(--accent-text-on-tint)]"
+                href={link.href}
+                key={link.href}
+                onClick={() => setIsMenuOpen(false)}
+              >
+                {link.label}
+              </a>
+            ))}
+            <Link
+              className="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--text-nav)] hover:bg-[var(--accent-tint)] hover:text-[var(--accent-text-on-tint)]"
+              onClick={() => setIsMenuOpen(false)}
+              to={isAuthenticated ? "/account" : "/auth"}
+            >
+              {isAuthenticated ? "Account" : "Sign in"}
             </Link>
           </div>
-          <div className="mt-9 grid gap-3 text-sm text-neutral-600 sm:grid-cols-3">
-            {["Supabase auth", "Stripe billing", "GitHub downloads"].map((item) => (
-              <div className="flex items-center gap-2" key={item}>
-                <CheckCircle2 className="h-4 w-4 text-[#236f5a]" />
-                {item}
+        </div>
+      ) : null}
+    </header>
+  );
+}
+
+function AppShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)]">
+      <NavBar />
+      <main>{children}</main>
+    </div>
+  );
+}
+
+function DownloadCard({
+  asset,
+  icon,
+  platform,
+  release,
+}: {
+  asset: LatestRelease["assets"]["macos"];
+  icon: ReactNode;
+  platform: string;
+  release: LatestRelease | null;
+}) {
+  const content = (
+    <>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--border-default)] bg-[var(--bg-page)] text-[var(--text-primary)]">
+            {icon}
+          </span>
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">{platform}</h3>
+            <p className="mt-1 text-[13px] text-[var(--text-muted)]">
+              {release ? `Version ${release.version}` : "Loading release"}
+            </p>
+          </div>
+        </div>
+        <Download className="h-5 w-5 text-[var(--accent)]" />
+      </div>
+      <p className="mt-5 min-h-10 text-sm leading-6 text-[var(--text-secondary)]">
+        {asset ? `${asset.name} ${formatBytes(asset.size)}` : "No production asset is available yet."}
+      </p>
+      <div className="mt-5">
+        <span className={cx(buttonClasses(asset ? "primary" : "secondary"), "w-full")}>
+          {asset ? "Download" : "Coming soon"}
+        </span>
+      </div>
+    </>
+  );
+
+  if (!asset) {
+    return <div className={cx(cardClass, "p-5 opacity-70")}>{content}</div>;
+  }
+
+  return (
+    <a
+      className={cx(cardClass, "block p-5 transition hover:border-[var(--border-default)]")}
+      href={asset.url}
+    >
+      {content}
+    </a>
+  );
+}
+
+function ReleaseDownload({ release }: { release: LatestRelease | null }) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <DownloadCard
+        asset={release?.assets.macos ?? null}
+        icon={<Apple className="h-5 w-5" />}
+        platform="macOS Apple Silicon"
+        release={release}
+      />
+      <DownloadCard
+        asset={release?.assets.windows ?? null}
+        icon={<Monitor className="h-5 w-5" />}
+        platform="Windows"
+        release={release}
+      />
+    </div>
+  );
+}
+
+function ProductPreview() {
+  return (
+    <Card className="p-0">
+      <div className="border-b border-[var(--border-subtle)] px-5 py-4">
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-sm font-medium text-[var(--text-primary)]">Second Brain desktop</p>
+          <Pill tone="neutral">Private workspace</Pill>
+        </div>
+      </div>
+      <div className="grid gap-0 md:grid-cols-[0.92fr_1.08fr]">
+        <div className="border-b border-[var(--border-subtle)] p-5 md:border-b-0 md:border-r">
+          <div className="space-y-3">
+            {["Research", "Invoices", "Meeting notes", "Local archive"].map((label, index) => (
+              <div
+                className={cx(
+                  "rounded-xl border px-4 py-3 text-sm",
+                  index === 0
+                    ? "border-[var(--accent)] bg-[var(--accent-tint)] text-[var(--accent-text-on-tint)]"
+                    : "border-[var(--border-subtle)] bg-[var(--bg-page)] text-[var(--text-secondary)]",
+                )}
+                key={label}
+              >
+                {label}
               </div>
             ))}
           </div>
         </div>
+        <div className="p-5">
+          <p className="font-display text-[28px] leading-tight text-[var(--text-primary)]">
+            Find the note, file, or answer without breaking flow.
+          </p>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            {["Local context", "Account access", "Release updates", "Redacted logs"].map((label) => (
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-page)] p-4" key={label}>
+                <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
+                <p className="mt-3 text-sm font-medium text-[var(--text-primary)]">{label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function LandingPage() {
+  const { release, releaseError } = useLatestRelease();
+  const [detectedPlatform, setDetectedPlatform] = useState<DownloadPlatform | null>(null);
+
+  useEffect(() => {
+    setDetectedPlatform(detectPlatform());
+  }, []);
+
+  const primaryAsset =
+    getAssetForPlatform(release, detectedPlatform) ??
+    release?.assets.macos ??
+    release?.assets.windows ??
+    null;
+  const primaryDownloadLabel =
+    detectedPlatform === "windows"
+      ? "Download for Windows"
+      : detectedPlatform === "macos"
+        ? "Download for Mac"
+        : "Download";
+
+  return (
+    <AppShell>
+      <section className={cx(containerClass, "grid gap-10 py-14 md:grid-cols-[1.1fr_0.9fr] md:py-20")}>
+        <div className="flex flex-col justify-center">
+          <Pill tone="accent">
+            {release ? `Now on version ${release.version}` : "Latest production release"}
+          </Pill>
+          <h1 className="mt-6 max-w-3xl font-display text-[44px] font-medium leading-[1.08] text-[var(--text-primary)] max-sm:text-[28px]">
+            A quiet place for <em className="text-[var(--accent)]">your private work</em>.
+          </h1>
+          <p className="mt-5 max-w-2xl text-base leading-8 text-[var(--text-secondary)]">
+            Download the desktop app, sign in with your account, and keep subscription
+            access, production updates, and support diagnostics in one calm workspace.
+          </p>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <ButtonLink href={primaryAsset?.url ?? "#download"}>
+              <MonitorDown className="h-4 w-4" />
+              {primaryDownloadLabel}
+            </ButtonLink>
+            <ButtonLink href="#download" variant="secondary">
+              See other platforms
+            </ButtonLink>
+          </div>
+          <p className="mt-4 text-[13px] leading-6 text-[var(--text-muted)]">
+            macOS Apple Silicon and Windows installers are served from GitHub Releases.
+          </p>
+        </div>
         <ProductPreview />
       </section>
 
-      <section className="border-y border-black/10 bg-white" id="download">
-        <div className="mx-auto grid max-w-7xl gap-8 px-5 py-12 sm:px-8 lg:grid-cols-[0.8fr_1.2fr]">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#e55934]">
-              Latest production release
-            </p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-normal text-neutral-950">
-              Download from GitHub Releases
-            </h2>
-            <p className="mt-4 leading-7 text-neutral-600">
-              The website points to production release assets on GitHub so your laptop
-              server stays light and never serves large installers directly.
-            </p>
-            <p className="mt-4 text-sm text-neutral-500">
-              {release
-                ? `Current version ${release.version}, published ${formatDate(release.publishedAt)}.`
-                : releaseError ?? "Loading release metadata..."}
-            </p>
-          </div>
-          <ReleaseDownload release={release} />
+      <section className={cx(containerClass, "py-14")} id="product">
+        <div className="grid gap-4 md:grid-cols-3">
+          {[
+            {
+              icon: UserRound,
+              title: "Create your account",
+              text: "Use Supabase email and password authentication for website and desktop access.",
+            },
+            {
+              icon: CreditCard,
+              title: "Subscribe in Stripe",
+              text: "Checkout applies eligible trials, promotion codes, and subscription access through webhooks.",
+            },
+            {
+              icon: ShieldCheck,
+              title: "Sign in on desktop",
+              text: "The app sends its Supabase session to account, update, proxy, and log APIs.",
+            },
+          ].map(({ icon: Icon, title, text }) => (
+            <Card className="transition hover:border-[var(--border-default)]" key={title}>
+              <Icon className="h-5 w-5 text-[var(--accent)]" />
+              <h3 className="mt-5 text-sm font-semibold text-[var(--text-primary)]">{title}</h3>
+              <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{text}</p>
+            </Card>
+          ))}
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-4 px-5 py-12 sm:px-8 md:grid-cols-3">
-        {[
-          {
-            icon: UserRound,
-            title: "1. Create account",
-            text: "Use Supabase email and password authentication for web and desktop access.",
-          },
-          {
-            icon: CreditCard,
-            title: "2. Subscribe",
-            text: "Stripe Checkout applies eligible trials, promotion codes, and subscription access through webhooks.",
-          },
-          {
-            icon: ShieldCheck,
-            title: "3. Sign in on desktop",
-            text: "The desktop app sends its Supabase session to account, update, and log APIs.",
-          },
-        ].map(({ icon: Icon, title, text }) => (
-          <article className="rounded-md border border-black/10 bg-white p-6 shadow-sm" key={title}>
-            <Icon className="h-6 w-6 text-[#236f5a]" />
-            <h3 className="mt-5 text-lg font-semibold">{title}</h3>
-            <p className="mt-3 leading-7 text-neutral-600">{text}</p>
-          </article>
-        ))}
+      <section className={cx(containerClass, "py-14")} id="pricing">
+        <div className="grid gap-8 md:grid-cols-[0.85fr_1.15fr] md:items-start">
+          <div>
+            <h2 className="font-display text-[28px] font-medium leading-tight text-[var(--text-primary)]">
+              Simple billing, hosted by <em className="text-[var(--accent)]">Stripe</em>.
+            </h2>
+            <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
+              Start or manage your subscription from the account page. Usage limits
+              are stored in Supabase and enforced by the managed proxy.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <PriceCard
+              amount="Subscription"
+              current
+              features={[
+                "Desktop account access",
+                "Production updates",
+                "Managed request limit",
+              ]}
+              name="Second Brain Pro"
+            />
+            <PriceCard
+              amount="Support"
+              features={[
+                "Billing through Stripe",
+                "Redacted diagnostics",
+                "GitHub-hosted downloads",
+              ]}
+              name="Account support"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="border-y border-[var(--border-subtle)] bg-[var(--bg-surface)]" id="download">
+        <div className={cx(containerClass, "grid gap-8 py-14 md:grid-cols-[0.82fr_1.18fr]")}>
+          <div>
+            <Pill tone="neutral">Downloads</Pill>
+            <h2 className="mt-5 font-display text-[28px] font-medium leading-tight text-[var(--text-primary)]">
+              Latest production installers
+            </h2>
+            <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
+              The laptop server resolves release metadata and redirects downloads to
+              GitHub assets, keeping hosting lightweight.
+            </p>
+            <p className="mt-4 text-[13px] leading-6 text-[var(--text-muted)]">
+              {release
+                ? `Current version ${release.version}, published ${formatDate(release.publishedAt)}.`
+                : releaseError ?? "Loading release metadata."}
+            </p>
+          </div>
+          <div>
+            {releaseError ? <InlineMessage tone="danger">{releaseError}</InlineMessage> : null}
+            <ReleaseDownload release={release} />
+          </div>
+        </div>
+      </section>
+
+      <section className={cx(containerClass, "py-14")}>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">Install on macOS</h3>
+            <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
+              Download the DMG, open it, and move Second Brain into Applications.
+              Sign in with the same email and password you use on this website.
+            </p>
+          </Card>
+          <Card>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">Install on Windows</h3>
+            <p className="mt-3 text-sm leading-7 text-[var(--text-secondary)]">
+              Download the installer, run setup, and sign in when the account screen
+              opens. Updates are checked against the latest production tag.
+            </p>
+          </Card>
+        </div>
       </section>
     </AppShell>
   );
@@ -392,7 +787,7 @@ function AuthPage() {
     try {
       if (mode === "signup") {
         await signUp({ email, password });
-        setNotice("Account created. Check your inbox if Supabase email confirmation is enabled.");
+        setNotice("Account created. Check your inbox if email confirmation is enabled.");
       } else {
         await signIn({ email, password });
         navigate("/account", { replace: true });
@@ -408,125 +803,97 @@ function AuthPage() {
 
   return (
     <AppShell>
-      <section className="mx-auto grid min-h-[calc(100vh-73px)] max-w-6xl items-center gap-10 px-5 py-12 sm:px-8 lg:grid-cols-[0.8fr_1fr]">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#236f5a]">
-            Account access
-          </p>
-          <h1 className="mt-4 text-4xl font-semibold tracking-normal text-neutral-950 sm:text-5xl">
-            {isDesktopLogin
-              ? "Sign in to connect the desktop app."
-              : "One login for the website and desktop app."}
-          </h1>
-          <p className="mt-5 max-w-xl leading-8 text-neutral-600">
-            Your Supabase session is the desktop authentication source. The app uses
-            that session for account checks, production updates, and best-effort logs.
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-black/10 bg-white p-6 shadow-sm sm:p-8">
-          <div className="mb-6 grid grid-cols-2 gap-2 rounded-md bg-neutral-100 p-1">
-            <button
-              className={`rounded px-4 py-2 text-sm font-medium transition ${
-                mode === "signin" ? "bg-white shadow-sm" : "text-neutral-600"
-              }`}
-              onClick={() => {
-                setMode("signin");
-              }}
-              type="button"
-            >
-              Sign in
-            </button>
-            <button
-              className={`rounded px-4 py-2 text-sm font-medium transition ${
-                mode === "signup" ? "bg-white shadow-sm" : "text-neutral-600"
-              }`}
-              onClick={() => {
-                setMode("signup");
-              }}
-              type="button"
-            >
-              Sign up
-            </button>
+      <section className={cx(containerClass, "grid min-h-[calc(100vh-73px)] place-items-center py-14")}>
+        <div className="w-full max-w-[420px]">
+          <div className="mb-8 text-center">
+            <Pill tone={isDesktopLogin ? "accent" : "neutral"}>
+              {isDesktopLogin ? "Desktop connection" : "Account access"}
+            </Pill>
+            <h1 className="mt-5 font-display text-[32px] font-medium leading-tight text-[var(--text-primary)]">
+              {isDesktopLogin ? "Sign in to connect Second Brain." : "Sign in to your workspace."}
+            </h1>
+            <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+              Use the same email and password on the website and desktop app.
+            </p>
           </div>
 
-          {isDesktopLogin ? (
-            <div className="mb-5 rounded-md border border-[#236f5a]/20 bg-[#236f5a]/10 px-4 py-3 text-sm leading-6 text-[#1d5d4c]">
-              Use the same email and password here and in Second Brain desktop.
+          <Card>
+            <div className="mb-6 grid grid-cols-2 gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-page)] p-1">
+              {(["signin", "signup"] as const).map((nextMode) => (
+                <button
+                  className={cx(
+                    "rounded-md px-4 py-2 text-sm font-medium transition",
+                    mode === nextMode
+                      ? "bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-[var(--shadow-card)]"
+                      : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]",
+                  )}
+                  key={nextMode}
+                  onClick={() => {
+                    setMode(nextMode);
+                    setFormError(null);
+                    setNotice(null);
+                  }}
+                  type="button"
+                >
+                  {nextMode === "signin" ? "Sign in" : "Sign up"}
+                </button>
+              ))}
             </div>
-          ) : null}
 
-          <form className="space-y-5" onSubmit={handleSubmit}>
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-neutral-700">Email</span>
-              <input
-                autoComplete="email"
-                className="w-full rounded-md border border-black/10 bg-white px-4 py-3 outline-none transition placeholder:text-neutral-400 focus:border-[#236f5a]"
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@downloadsecondbrain.com"
-                required
-                type="email"
-                value={email}
-              />
-            </label>
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-neutral-700">
-                Password
-              </span>
-              <input
-                autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                className="w-full rounded-md border border-black/10 bg-white px-4 py-3 outline-none transition placeholder:text-neutral-400 focus:border-[#236f5a]"
-                minLength={8}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="At least 8 characters"
-                required
-                type="password"
-                value={password}
-              />
-            </label>
-
-            {notice ? (
-              <div className="rounded-md border border-[#236f5a]/20 bg-[#236f5a]/10 px-4 py-3 text-sm text-[#1d5d4c]">
-                {notice}
+            {isDesktopLogin ? (
+              <div className="mb-5">
+                <InlineMessage tone="accent">
+                  Sign in here, then return to the desktop app and use the same account.
+                </InlineMessage>
               </div>
             ) : null}
 
-            {formError || error ? (
-              <div className="rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
-                {formError ?? error}
-              </div>
-            ) : null}
+            <form className="space-y-5" onSubmit={handleSubmit}>
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-[var(--text-primary)]">Email</span>
+                <input
+                  autoComplete="email"
+                  className="w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] px-4 py-3 text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]"
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="you@downloadsecondbrain.com"
+                  required
+                  type="email"
+                  value={email}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-[var(--text-primary)]">Password</span>
+                <input
+                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                  className="w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] px-4 py-3 text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]"
+                  minLength={8}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="At least 8 characters"
+                  required
+                  type="password"
+                  value={password}
+                />
+              </label>
 
-            <button
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#236f5a] px-5 py-3 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c] disabled:cursor-not-allowed disabled:opacity-70"
-              disabled={isLoading || isSubmitting}
-              type="submit"
-            >
-              {isSubmitting
-                ? "Submitting..."
-                : mode === "signup"
-                  ? "Create account"
-                  : "Sign in"}
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </form>
+              {notice ? <InlineMessage tone="accent">{notice}</InlineMessage> : null}
+
+              {friendlyAuthError(formError ?? error) ? (
+                <InlineMessage tone="danger">{friendlyAuthError(formError ?? error)}</InlineMessage>
+              ) : null}
+
+              <Button className="w-full" disabled={isLoading || isSubmitting} type="submit">
+                {isSubmitting
+                  ? "Working"
+                  : mode === "signup"
+                    ? "Create account"
+                    : "Sign in"}
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </form>
+          </Card>
         </div>
       </section>
     </AppShell>
-  );
-}
-
-function StatusPill({ label, tone }: { label: string; tone: "green" | "orange" | "neutral" }) {
-  const styles = {
-    green: "border-[#236f5a]/20 bg-[#236f5a]/10 text-[#1d5d4c]",
-    neutral: "border-black/10 bg-neutral-100 text-neutral-700",
-    orange: "border-[#e55934]/20 bg-[#e55934]/10 text-[#9f321c]",
-  };
-
-  return (
-    <span className={`inline-flex rounded-full border px-3 py-1 text-sm font-medium ${styles[tone]}`}>
-      {label}
-    </span>
   );
 }
 
@@ -551,8 +918,7 @@ function AccountPage() {
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [isCancelingSubscription, setIsCancelingSubscription] = useState(false);
   const [isResumingSubscription, setIsResumingSubscription] = useState(false);
-  const [release, setRelease] = useState<LatestRelease | null>(null);
-  const [releaseError, setReleaseError] = useState<string | null>(null);
+  const { release, releaseError } = useLatestRelease();
   const location = useLocation();
 
   const statusLabel = useMemo(() => {
@@ -571,13 +937,15 @@ function AccountPage() {
     return "No active subscription";
   }, [isSubscribed, isTrialActive, subscription?.cancel_at_period_end]);
 
-  const statusTone = subscription?.cancel_at_period_end
-    ? "orange"
+  const statusTone: Tone = subscription?.cancel_at_period_end
+    ? "warning"
     : isSubscribed || isTrialActive
-      ? "green"
+      ? "accent"
       : hasAccessBlocked
-        ? "orange"
+        ? "warning"
         : "neutral";
+  const usageRequests = Number(subscription?.usage_requests ?? 0);
+  const usageLimit = Number(subscription?.usage_request_limit ?? 1000);
 
   useEffect(() => {
     const stripeKey = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
@@ -585,28 +953,6 @@ function AccountPage() {
     if (stripeKey) {
       void loadStripe(stripeKey);
     }
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-
-    void fetchLatestRelease()
-      .then((nextRelease) => {
-        if (active) {
-          setRelease(nextRelease);
-        }
-      })
-      .catch((nextError) => {
-        if (active) {
-          setReleaseError(
-            nextError instanceof Error ? nextError.message : "Unable to load downloads.",
-          );
-        }
-      });
-
-    return () => {
-      active = false;
-    };
   }, []);
 
   async function handleStartCheckout() {
@@ -787,10 +1133,8 @@ function AccountPage() {
   if (isLoading) {
     return (
       <AppShell>
-        <section className="mx-auto grid min-h-[calc(100vh-73px)] max-w-4xl place-items-center px-5 sm:px-8">
-          <div className="rounded-md border border-black/10 bg-white px-5 py-4 shadow-sm">
-            Loading account...
-          </div>
+        <section className={cx(containerClass, "grid min-h-[calc(100vh-73px)] place-items-center py-14")}>
+          <Card>Loading account.</Card>
         </section>
       </AppShell>
     );
@@ -802,86 +1146,114 @@ function AccountPage() {
 
   return (
     <AppShell>
-      <section className="mx-auto max-w-7xl px-5 py-10 sm:px-8">
-        <div className="flex flex-col gap-4 border-b border-black/10 pb-8 md:flex-row md:items-end md:justify-between">
+      <section className={cx(containerClass, "py-10 sm:py-14")}>
+        <div className="flex flex-col gap-4 border-b border-[var(--border-subtle)] pb-8 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#236f5a]">
-              Account
-            </p>
-            <h1 className="mt-3 text-4xl font-semibold tracking-normal text-neutral-950">
-              {user?.email ?? "Signed in"}
+            <Pill tone={statusTone}>{statusLabel}</Pill>
+            <h1 className="mt-4 font-display text-[36px] font-medium leading-tight text-[var(--text-primary)] max-sm:text-[28px]">
+              Your account
             </h1>
           </div>
-          <StatusPill label={statusLabel} tone={statusTone} />
+          <p className="text-sm text-[var(--text-secondary)]">{user?.email ?? "Signed in"}</p>
         </div>
 
-        {location.search.includes("checkout=success") ? (
-          <div className="mt-6 rounded-md border border-[#236f5a]/20 bg-[#236f5a]/10 px-4 py-3 text-sm text-[#1d5d4c]">
-            Checkout completed. Stripe will sync subscription access shortly.
-          </div>
-        ) : null}
+        <div className="mt-6 space-y-3">
+          {location.search.includes("checkout=success") ? (
+            <InlineMessage tone="accent">
+              Checkout completed. Stripe will sync subscription access shortly.
+            </InlineMessage>
+          ) : null}
 
-        {location.search.includes("checkout=canceled") ? (
-          <div className="mt-6 rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
-            Checkout was canceled before completion.
-          </div>
-        ) : null}
+          {location.search.includes("checkout=canceled") ? (
+            <InlineMessage tone="warning">Checkout was canceled before completion.</InlineMessage>
+          ) : null}
 
-        {subscriptionNotice ? (
-          <div className="mt-6 rounded-md border border-[#236f5a]/20 bg-[#236f5a]/10 px-4 py-3 text-sm text-[#1d5d4c]">
-            {subscriptionNotice}
-          </div>
-        ) : null}
+          {subscriptionNotice ? <InlineMessage tone="accent">{subscriptionNotice}</InlineMessage> : null}
 
-        {checkoutError || portalError || subscriptionActionError || error ? (
-          <div className="mt-6 rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
-            {checkoutError ?? portalError ?? subscriptionActionError ?? error}
-          </div>
-        ) : null}
+          {checkoutError || portalError || subscriptionActionError || error ? (
+            <InlineMessage tone="danger">
+              {checkoutError ?? portalError ?? subscriptionActionError ?? friendlyAuthError(error) ?? "Something went wrong. Try again."}
+            </InlineMessage>
+          ) : null}
+        </div>
 
-        <div className="mt-8 grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
-          <section className="rounded-lg border border-black/10 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
+        <div className="mt-8 grid gap-5 md:grid-cols-[1.1fr_0.9fr]">
+          <Card>
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-xl font-semibold">Subscription</h2>
-                <p className="mt-2 text-sm leading-6 text-neutral-600">
-                  Stripe manages billing, cancellation, promotion codes, and invoices.
-                  Supabase stores access state for the website and desktop app.
+                <h2 className="font-display text-[28px] font-medium leading-tight text-[var(--text-primary)]">
+                  Your account
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                  Account access is shared by the website and desktop app.
                 </p>
               </div>
-              <CreditCard className="h-6 w-6 text-[#236f5a]" />
+              <UserRound className="h-5 w-5 text-[var(--accent)]" />
             </div>
-            <dl className="mt-6 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-md bg-neutral-100 p-4">
-                <dt className="text-sm text-neutral-500">Status</dt>
-                <dd className="mt-1 font-medium">{subscription?.status ?? "none"}</dd>
-              </div>
-              <div className="rounded-md bg-neutral-100 p-4">
-                <dt className="text-sm text-neutral-500">Plan</dt>
-                <dd className="mt-1 font-medium">{subscription?.plan_name ?? "Second Brain Pro"}</dd>
-              </div>
-              <div className="rounded-md bg-neutral-100 p-4">
-                <dt className="text-sm text-neutral-500">Trial ends</dt>
-                <dd className="mt-1 font-medium">{formatDate(subscription?.trial_end)}</dd>
-              </div>
-              <div className="rounded-md bg-neutral-100 p-4">
-                <dt className="text-sm text-neutral-500">
-                  {subscription?.cancel_at_period_end ? "Access ends" : "Renews"}
-                </dt>
-                <dd className="mt-1 font-medium">{formatDate(subscription?.subscription_renews_at)}</dd>
-              </div>
-              <div className="rounded-md bg-neutral-100 p-4 sm:col-span-2">
-                <dt className="text-sm text-neutral-500">Managed requests</dt>
-                <dd className="mt-1 font-medium">
-                  {subscription
-                    ? `${subscription.usage_requests} / ${subscription.usage_request_limit}`
-                    : "0 / 1000"}
-                </dd>
-              </div>
+
+            <dl className="mt-6">
+              <DataRow label="Email" value={user?.email ?? "Not available"} />
+              <DataRow label="Plan" value={subscription?.plan_name ?? "Second Brain Pro"} />
+              <DataRow label="Status" value={<Pill tone={statusTone}>{statusLabel}</Pill>} />
+              <DataRow
+                label={subscription?.cancel_at_period_end ? "Access ends" : "Renews"}
+                value={formatDate(subscription?.subscription_renews_at)}
+              />
+              <DataRow label="Usage" value={`${usageRequests} / ${usageLimit} requests`} />
             </dl>
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-              <button
-                className="inline-flex items-center justify-center gap-2 rounded-md bg-[#236f5a] px-5 py-3 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c] disabled:cursor-not-allowed disabled:opacity-70"
+
+            <div className="mt-7 border-t border-[var(--border-subtle)] pt-5">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Your sessions</h3>
+              <div className="mt-3">
+                <SessionRow
+                  deviceName="This browser"
+                  meta="Current website session"
+                  status={<Pill tone="accent">Active</Pill>}
+                />
+                <div className="border-t border-[var(--border-subtle)] py-3 text-sm text-[var(--text-muted)]">
+                  No other devices signed in.
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="font-display text-[28px] font-medium leading-tight text-[var(--text-primary)]">
+                  Plan
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                  Stripe manages billing, invoices, cancellation, and payment methods.
+                </p>
+              </div>
+              <CreditCard className="h-5 w-5 text-[var(--accent)]" />
+            </div>
+
+            <div className="mt-6 grid gap-4">
+              <PriceCard
+                amount={statusLabel}
+                current={isSubscribed || isTrialActive}
+                features={[
+                  "Desktop account access",
+                  "Production update checks",
+                  `${usageLimit} managed requests`,
+                ]}
+                name={subscription?.plan_name ?? "Second Brain Pro"}
+              />
+              <PriceCard
+                amount="Hosted"
+                features={[
+                  "Stripe billing portal",
+                  "Redacted diagnostics",
+                  "GitHub release downloads",
+                ]}
+                name="Support surface"
+              />
+            </div>
+
+            <div className="mt-6 flex flex-col gap-3">
+              <Button
                 disabled={isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription}
                 onClick={() => {
                   void handleStartCheckout();
@@ -889,99 +1261,79 @@ function AccountPage() {
                 type="button"
               >
                 <CreditCard className="h-4 w-4" />
-                {isStartingCheckout ? "Redirecting..." : "Start subscription"}
-              </button>
-              <button
-                className="inline-flex items-center justify-center gap-2 rounded-md border border-black/10 bg-white px-5 py-3 font-medium text-neutral-900 shadow-sm transition hover:border-black/20 disabled:cursor-not-allowed disabled:opacity-70"
-                disabled={isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription || !subscription?.stripe_customer_id}
+                {isStartingCheckout ? "Redirecting" : "Start subscription"}
+              </Button>
+              <Button
+                disabled={
+                  isStartingCheckout ||
+                  isOpeningPortal ||
+                  isCancelingSubscription ||
+                  isResumingSubscription ||
+                  !subscription?.stripe_customer_id
+                }
                 onClick={() => {
                   void handleOpenBillingPortal();
                 }}
                 type="button"
+                variant="secondary"
               >
                 <ExternalLink className="h-4 w-4" />
-                {isOpeningPortal ? "Opening..." : "Manage billing"}
-              </button>
+                {isOpeningPortal ? "Opening" : "Manage billing"}
+              </Button>
               {subscription?.stripe_subscription_id && subscription.status !== "canceled" ? (
                 subscription.cancel_at_period_end ? (
-                  <button
-                    className="inline-flex items-center justify-center gap-2 rounded-md border border-[#236f5a]/30 bg-white px-5 py-3 font-medium text-[#1d5d4c] shadow-sm transition hover:border-[#236f5a]/60 disabled:cursor-not-allowed disabled:opacity-70"
+                  <Button
+                    className="border-[var(--accent)] text-[var(--accent-text-on-tint)] hover:border-[var(--accent-hover)]"
                     disabled={isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription}
                     onClick={() => {
                       void handleResumeSubscription();
                     }}
                     type="button"
+                    variant="secondary"
                   >
                     <RotateCcw className="h-4 w-4" />
-                    {isResumingSubscription ? "Resuming..." : "Resume subscription"}
-                  </button>
+                    {isResumingSubscription ? "Resuming" : "Resume subscription"}
+                  </Button>
                 ) : (
-                  <button
-                    className="inline-flex items-center justify-center gap-2 rounded-md border border-[#e55934]/30 bg-white px-5 py-3 font-medium text-[#9f321c] shadow-sm transition hover:border-[#e55934]/60 disabled:cursor-not-allowed disabled:opacity-70"
+                  <Button
+                    className="border-[var(--danger-border)] text-[var(--danger)] hover:border-[var(--danger)]"
                     disabled={isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription}
                     onClick={() => {
                       void handleCancelSubscription();
                     }}
                     type="button"
+                    variant="secondary"
                   >
                     <XCircle className="h-4 w-4" />
-                    {isCancelingSubscription ? "Canceling..." : "Cancel subscription"}
-                  </button>
+                    {isCancelingSubscription ? "Canceling" : "Cancel subscription"}
+                  </Button>
                 )
               ) : null}
             </div>
-          </section>
-
-          <section className="rounded-lg border border-black/10 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold">Desktop authentication</h2>
-                <p className="mt-2 text-sm leading-6 text-neutral-600">
-                  Sign in inside the desktop app with this same email and password.
-                  Desktop API calls use the Supabase session bearer token.
-                </p>
-              </div>
-              <KeyRound className="h-6 w-6 text-[#236f5a]" />
-            </div>
-            <div className="mt-6 rounded-md bg-[#111827] p-4 font-mono text-sm text-white">
-              <div>GET /api/desktop/account</div>
-              <div className="mt-2 text-white/60">Authorization: Bearer &lt;supabase_access_token&gt;</div>
-            </div>
-            <p className="mt-4 text-sm leading-6 text-neutral-600">
-              Logs go to <span className="font-mono">POST /api/desktop/logs</span> in small
-              redacted batches and are best-effort only.
-            </p>
-          </section>
+          </Card>
         </div>
 
-        <section className="mt-5 rounded-lg border border-black/10 bg-white p-6 shadow-sm">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 className="text-xl font-semibold">Downloads and updates</h2>
-              <p className="mt-2 text-sm leading-6 text-neutral-600">
-                Installers redirect to GitHub assets. Update checks compare against the
-                latest production tag.
-              </p>
+        <section className="mt-5">
+          <Card>
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="font-display text-[28px] font-medium leading-tight text-[var(--text-primary)]">
+                  Downloads and updates
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                  Installers redirect to GitHub assets. Update checks compare against
+                  the latest production tag.
+                </p>
+              </div>
+              {release?.htmlUrl ? (
+                <ButtonLink href={release.htmlUrl} rel="noreferrer" target="_blank" variant="secondary">
+                  View release
+                  <ExternalLink className="h-4 w-4" />
+                </ButtonLink>
+              ) : null}
             </div>
-            {release?.htmlUrl ? (
-              <a
-                className="inline-flex items-center gap-2 text-sm font-medium text-[#236f5a]"
-                href={release.htmlUrl}
-                rel="noreferrer"
-                target="_blank"
-              >
-                View release
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            ) : null}
-          </div>
-          {releaseError ? (
-            <div className="rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
-              {releaseError}
-            </div>
-          ) : (
-            <ReleaseDownload release={release} />
-          )}
+            {releaseError ? <InlineMessage tone="danger">{releaseError}</InlineMessage> : <ReleaseDownload release={release} />}
+          </Card>
         </section>
       </section>
     </AppShell>
