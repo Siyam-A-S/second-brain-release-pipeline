@@ -187,6 +187,27 @@ async function authenticateSupabaseRequest(req) {
   return data.user;
 }
 
+function isMissingColumnError(error, columnNames) {
+  const haystack = `${error?.code || ""} ${error?.message || ""} ${error?.details || ""}`;
+  return columnNames.some((columnName) => haystack.includes(columnName));
+}
+
+function normalizeSubscriptionRow(subscription) {
+  if (!subscription) {
+    return null;
+  }
+
+  return {
+    plan_name: "Second Brain Pro",
+    subscription_renews_at: null,
+    usage_period_end: null,
+    usage_period_start: null,
+    usage_request_limit: 1000,
+    usage_requests: 0,
+    ...subscription,
+  };
+}
+
 async function fetchSubscription(userId) {
   const { data, error } = await supabaseAdmin
     .from("subscriptions")
@@ -196,11 +217,34 @@ async function fetchSubscription(userId) {
     .eq("user_id", userId)
     .maybeSingle();
 
+  if (error && isMissingColumnError(error, [
+    "plan_name",
+    "subscription_renews_at",
+    "usage_period_start",
+    "usage_period_end",
+    "usage_requests",
+    "usage_request_limit",
+  ])) {
+    const { data: fallbackData, error: fallbackError } = await supabaseAdmin
+      .from("subscriptions")
+      .select(
+        "user_id, stripe_customer_id, stripe_subscription_id, status, trial_start, trial_end, updated_at",
+      )
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (fallbackError) {
+      throw Object.assign(new Error(fallbackError.message), { statusCode: 500 });
+    }
+
+    return normalizeSubscriptionRow(fallbackData);
+  }
+
   if (error) {
     throw Object.assign(new Error(error.message), { statusCode: 500 });
   }
 
-  return data;
+  return normalizeSubscriptionRow(data);
 }
 
 function toIsoFromStripeTimestamp(timestamp) {
@@ -287,23 +331,21 @@ async function getOrCreateCustomer(userId, email) {
     },
   });
 
-  const { error } = await supabaseAdmin.from("subscriptions").upsert(
-    {
-      user_id: userId,
-      stripe_customer_id: customer.id,
-      status: subscription?.status || null,
-      stripe_subscription_id: subscription?.stripe_subscription_id || null,
-      plan_name: subscription?.plan_name || "Second Brain Pro",
-      subscription_renews_at: subscription?.subscription_renews_at || null,
-      trial_end: subscription?.trial_end || null,
-      trial_start: subscription?.trial_start || null,
-      usage_period_end: subscription?.usage_period_end || null,
-      usage_period_start: subscription?.usage_period_start || null,
-      usage_request_limit: subscription?.usage_request_limit || 1000,
-      usage_requests: subscription?.usage_requests || 0,
-    },
-    { onConflict: "user_id" },
-  );
+  const payload = {
+    user_id: userId,
+    stripe_customer_id: customer.id,
+    status: subscription?.status || null,
+    stripe_subscription_id: subscription?.stripe_subscription_id || null,
+    plan_name: subscription?.plan_name || "Second Brain Pro",
+    subscription_renews_at: subscription?.subscription_renews_at || null,
+    trial_end: subscription?.trial_end || null,
+    trial_start: subscription?.trial_start || null,
+    usage_period_end: subscription?.usage_period_end || null,
+    usage_period_start: subscription?.usage_period_start || null,
+    usage_request_limit: subscription?.usage_request_limit || 1000,
+    usage_requests: subscription?.usage_requests || 0,
+  };
+  const { error } = await upsertSubscriptionPayload(payload);
 
   if (error) {
     throw Object.assign(new Error(error.message), { statusCode: 500 });
@@ -379,6 +421,37 @@ async function resolveStripeSubscriptionUser(subscription) {
   return userId;
 }
 
+async function upsertSubscriptionPayload(payload) {
+  const { error } = await supabaseAdmin.from("subscriptions").upsert(payload, {
+    onConflict: "user_id",
+  });
+
+  if (!error || !isMissingColumnError(error, [
+    "plan_name",
+    "subscription_renews_at",
+    "usage_period_start",
+    "usage_period_end",
+    "usage_requests",
+    "usage_request_limit",
+  ])) {
+    return { error };
+  }
+
+  const {
+    plan_name: _planName,
+    subscription_renews_at: _subscriptionRenewsAt,
+    usage_period_end: _usagePeriodEnd,
+    usage_period_start: _usagePeriodStart,
+    usage_request_limit: _usageRequestLimit,
+    usage_requests: _usageRequests,
+    ...fallbackPayload
+  } = payload;
+
+  return supabaseAdmin.from("subscriptions").upsert(fallbackPayload, {
+    onConflict: "user_id",
+  });
+}
+
 async function upsertSubscriptionFromStripe(subscription) {
   const userId = await resolveStripeSubscriptionUser(subscription);
   const payload = {
@@ -395,9 +468,7 @@ async function upsertSubscriptionFromStripe(subscription) {
     usage_request_limit: 1000,
   };
 
-  const { error } = await supabaseAdmin.from("subscriptions").upsert(payload, {
-    onConflict: "user_id",
-  });
+  const { error } = await upsertSubscriptionPayload(payload);
 
   if (error) {
     throw new Error(error.message);
@@ -761,7 +832,12 @@ async function handleDesktopLogs(req, res, requestId) {
       user_id: user.id,
     }));
 
-    const { error } = await supabaseAdmin.from("desktop_log_events").insert(rows);
+    let { error } = await supabaseAdmin.from("desktop_log_events").insert(rows);
+
+    if (error && isMissingColumnError(error, ["arch", "platform"])) {
+      const fallbackRows = rows.map(({ arch: _arch, platform: _platform, ...row }) => row);
+      ({ error } = await supabaseAdmin.from("desktop_log_events").insert(fallbackRows));
+    }
 
     if (error) {
       throw Object.assign(new Error(error.message), { statusCode: 500 });
