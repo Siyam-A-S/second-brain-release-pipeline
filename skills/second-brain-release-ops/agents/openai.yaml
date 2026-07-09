@@ -1,4 +1,4 @@
 interface:
   display_name: "Second Brain Release Ops"
-  short_description: "Website, desktop API, and proxy ops"
-  default_prompt: "Use $second-brain-release-ops to plan or implement a safe Second Brain website, desktop API, Cloud Run proxy, or deployment change."
+  short_description: "Website, billing, desktop API, and proxy ops"
+  default_prompt: "Use $second-brain-release-ops to plan or implement a safe Second Brain website, billing, usage, support, desktop API, Cloud Run proxy, or deployment change."

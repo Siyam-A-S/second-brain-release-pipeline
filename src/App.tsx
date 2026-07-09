@@ -324,8 +324,8 @@ function LandingPage() {
           },
           {
             icon: CreditCard,
-            title: "2. Start trial",
-            text: "Stripe Checkout creates the subscription and syncs access through webhooks.",
+            title: "2. Subscribe",
+            text: "Stripe Checkout applies eligible trials, promotion codes, and subscription access through webhooks.",
           },
           {
             icon: ShieldCheck,
@@ -541,12 +541,18 @@ function AccountPage() {
     user,
   } = useAuth();
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [portalError, setPortalError] = useState<string | null>(null);
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
+  const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [release, setRelease] = useState<LatestRelease | null>(null);
   const [releaseError, setReleaseError] = useState<string | null>(null);
   const location = useLocation();
 
   const statusLabel = useMemo(() => {
+    if (subscription?.cancel_at_period_end && (isSubscribed || isTrialActive)) {
+      return "Cancellation scheduled";
+    }
+
     if (isSubscribed) {
       return "Access active";
     }
@@ -556,9 +562,15 @@ function AccountPage() {
     }
 
     return "No active subscription";
-  }, [isSubscribed, isTrialActive]);
+  }, [isSubscribed, isTrialActive, subscription?.cancel_at_period_end]);
 
-  const statusTone = isSubscribed || isTrialActive ? "green" : hasAccessBlocked ? "orange" : "neutral";
+  const statusTone = subscription?.cancel_at_period_end
+    ? "orange"
+    : isSubscribed || isTrialActive
+      ? "green"
+      : hasAccessBlocked
+        ? "orange"
+        : "neutral";
 
   useEffect(() => {
     const stripeKey = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
@@ -597,6 +609,7 @@ function AccountPage() {
     }
 
     setCheckoutError(null);
+    setPortalError(null);
     setIsStartingCheckout(true);
 
     try {
@@ -628,6 +641,48 @@ function AccountPage() {
       );
     } finally {
       setIsStartingCheckout(false);
+    }
+  }
+
+  async function handleOpenBillingPortal() {
+    if (!accessToken) {
+      setPortalError("Sign in again before managing billing.");
+      return;
+    }
+
+    setCheckoutError(null);
+    setPortalError(null);
+    setIsOpeningPortal(true);
+
+    try {
+      const response = await fetch("/api/create-billing-portal-session", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          payload && typeof payload.error === "string"
+            ? payload.error
+            : "Unable to open billing portal.",
+        );
+      }
+
+      const { url } = checkoutSessionSchema.parse(payload);
+      window.location.assign(url);
+    } catch (requestError) {
+      setPortalError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to open Stripe billing portal.",
+      );
+    } finally {
+      setIsOpeningPortal(false);
     }
   }
 
@@ -674,9 +729,9 @@ function AccountPage() {
           </div>
         ) : null}
 
-        {checkoutError || error ? (
+        {checkoutError || portalError || error ? (
           <div className="mt-6 rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
-            {checkoutError ?? error}
+            {checkoutError ?? portalError ?? error}
           </div>
         ) : null}
 
@@ -686,8 +741,8 @@ function AccountPage() {
               <div>
                 <h2 className="text-xl font-semibold">Subscription</h2>
                 <p className="mt-2 text-sm leading-6 text-neutral-600">
-                  Stripe manages billing. Supabase stores the access state consumed by
-                  the website and desktop app.
+                  Stripe manages billing, cancellation, promotion codes, and invoices.
+                  Supabase stores access state for the website and desktop app.
                 </p>
               </div>
               <CreditCard className="h-6 w-6 text-[#236f5a]" />
@@ -706,7 +761,9 @@ function AccountPage() {
                 <dd className="mt-1 font-medium">{formatDate(subscription?.trial_end)}</dd>
               </div>
               <div className="rounded-md bg-neutral-100 p-4">
-                <dt className="text-sm text-neutral-500">Renews</dt>
+                <dt className="text-sm text-neutral-500">
+                  {subscription?.cancel_at_period_end ? "Access ends" : "Renews"}
+                </dt>
                 <dd className="mt-1 font-medium">{formatDate(subscription?.subscription_renews_at)}</dd>
               </div>
               <div className="rounded-md bg-neutral-100 p-4 sm:col-span-2">
@@ -718,17 +775,30 @@ function AccountPage() {
                 </dd>
               </div>
             </dl>
-            <button
-              className="mt-6 inline-flex items-center justify-center gap-2 rounded-md bg-[#236f5a] px-5 py-3 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c] disabled:cursor-not-allowed disabled:opacity-70"
-              disabled={isStartingCheckout}
-              onClick={() => {
-                void handleStartCheckout();
-              }}
-              type="button"
-            >
-              <CreditCard className="h-4 w-4" />
-              {isStartingCheckout ? "Redirecting..." : "Start 2-day trial"}
-            </button>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+              <button
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-[#236f5a] px-5 py-3 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c] disabled:cursor-not-allowed disabled:opacity-70"
+                disabled={isStartingCheckout || isOpeningPortal}
+                onClick={() => {
+                  void handleStartCheckout();
+                }}
+                type="button"
+              >
+                <CreditCard className="h-4 w-4" />
+                {isStartingCheckout ? "Redirecting..." : "Start subscription"}
+              </button>
+              <button
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-black/10 bg-white px-5 py-3 font-medium text-neutral-900 shadow-sm transition hover:border-black/20 disabled:cursor-not-allowed disabled:opacity-70"
+                disabled={isStartingCheckout || isOpeningPortal || !subscription?.stripe_customer_id}
+                onClick={() => {
+                  void handleOpenBillingPortal();
+                }}
+                type="button"
+              >
+                <ExternalLink className="h-4 w-4" />
+                {isOpeningPortal ? "Opening..." : "Manage billing"}
+              </button>
+            </div>
           </section>
 
           <section className="rounded-lg border border-black/10 bg-white p-6 shadow-sm">

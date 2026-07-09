@@ -17,9 +17,10 @@ description: Project-specific release operations for the Second Brain release we
 1. Inspect the live repo first: `server.mjs`, `src/App.tsx`, `src/hooks/useAuth.tsx`, `src/lib/supabase.ts`, `.env.example`, `nixpacks.toml`, and `supabase/migrations/`.
 2. For deployment, hosting, env vars, rollback, or laptop safety work, read `references/deployment.md`.
 3. For account, download, update, logging, tracing, or desktop API work, read `references/api-contracts.md`.
-4. For Cloud Run proxy, gcloud, managed AI, proxy metering, or Cloud Logging extraction work, read `references/cloud-run-proxy.md`.
-5. Preserve the production contract unless the user explicitly changes it: desktop auth uses Supabase sessions, downloads redirect to GitHub assets, logs are best-effort, and managed AI uses the Supabase bearer-token proxy.
-6. Verify with `npm run build`; also smoke API routes locally when runtime secrets are available.
+4. For subscription cancellation, trial policy, usage limits, discounts, refunds, or support workflows, read `references/billing-usage-support.md`.
+5. For Cloud Run proxy, gcloud, managed AI, proxy metering, or Cloud Logging extraction work, read `references/cloud-run-proxy.md`.
+6. Preserve the production contract unless the user explicitly changes it: desktop auth uses Supabase sessions, downloads redirect to GitHub assets, logs are best-effort, billing stays in Stripe, and managed AI uses the Supabase bearer-token proxy.
+7. Verify with `npm run build`; also smoke API routes locally when runtime secrets are available.
 
 ## Implementation Preferences
 
@@ -30,6 +31,7 @@ description: Project-specific release operations for the Second Brain release we
 - Add or preserve request IDs on API responses and structured server logs.
 - Favor bounded payloads, explicit schemas, and redaction over broad log collection.
 - Keep extracted operational logs local, short-lived, redacted, and ignored by git.
+- Make billing changes customer-safe: cancellation is self-serve through Stripe Billing Portal, trial eligibility is enforced server-side, and usage-limit overrides survive webhook sync.
 
 ## Validation Checklist
 

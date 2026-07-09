@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import Stripe from "stripe";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
@@ -187,6 +187,102 @@ async function authenticateSupabaseRequest(req) {
   return data.user;
 }
 
+function normalizeEmail(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized.includes("@") ? normalized : null;
+}
+
+function normalizePhone(value) {
+  const digitsOnly = String(value || "").replace(/\D/g, "");
+  return digitsOnly.length >= 10 ? digitsOnly : null;
+}
+
+function hashTrialIdentity(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function getTrialIdentityCandidates(user) {
+  const candidates = [];
+  const email = normalizeEmail(user.email);
+
+  if (email) {
+    candidates.push({
+      identity_hash: hashTrialIdentity(email),
+      identity_type: "email",
+    });
+  }
+
+  const phoneValues = [
+    user.phone,
+    user.user_metadata?.phone,
+    user.user_metadata?.phone_number,
+    user.app_metadata?.phone,
+  ];
+  const phone = normalizePhone(phoneValues.find(Boolean));
+
+  if (phone) {
+    candidates.push({
+      identity_hash: hashTrialIdentity(phone),
+      identity_type: "phone",
+    });
+  }
+
+  return candidates;
+}
+
+function isUniqueConstraintError(error) {
+  return error?.code === "23505" || /duplicate key|unique constraint/i.test(error?.message || "");
+}
+
+async function hasTrialClaim(identities) {
+  for (const identity of identities) {
+    const { data, error } = await supabaseAdmin
+      .from("billing_trial_claims")
+      .select("identity_type, identity_hash")
+      .eq("identity_type", identity.identity_type)
+      .eq("identity_hash", identity.identity_hash)
+      .maybeSingle();
+
+    if (error) {
+      throw Object.assign(new Error(error.message), { statusCode: 500 });
+    }
+
+    if (data) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function claimTrialIdentities(user, customerId) {
+  const identities = getTrialIdentityCandidates(user);
+
+  if (!identities.length || await hasTrialClaim(identities)) {
+    return false;
+  }
+
+  const now = new Date().toISOString();
+  const rows = identities.map((identity) => ({
+    ...identity,
+    claimed_at: now,
+    first_user_id: user.id,
+    last_seen_at: now,
+    stripe_customer_id: customerId,
+  }));
+  const { error } = await supabaseAdmin.from("billing_trial_claims").insert(rows);
+
+  if (!error) {
+    return true;
+  }
+
+  if (isUniqueConstraintError(error)) {
+    return false;
+  }
+
+  throw Object.assign(new Error(error.message), { statusCode: 500 });
+}
+
 function isMissingColumnError(error, columnNames) {
   const haystack = `${error?.code || ""} ${error?.message || ""} ${error?.details || ""}`;
   return columnNames.some((columnName) => haystack.includes(columnName));
@@ -199,6 +295,7 @@ function normalizeSubscriptionRow(subscription) {
 
   return {
     plan_name: "Second Brain Pro",
+    cancel_at_period_end: false,
     subscription_renews_at: null,
     usage_period_end: null,
     usage_period_start: null,
@@ -212,13 +309,14 @@ async function fetchSubscription(userId) {
   const { data, error } = await supabaseAdmin
     .from("subscriptions")
     .select(
-      "user_id, stripe_customer_id, stripe_subscription_id, status, trial_start, trial_end, plan_name, subscription_renews_at, usage_period_start, usage_period_end, usage_requests, usage_request_limit, updated_at",
+      "user_id, stripe_customer_id, stripe_subscription_id, status, cancel_at_period_end, trial_start, trial_end, plan_name, subscription_renews_at, usage_period_start, usage_period_end, usage_requests, usage_request_limit, updated_at",
     )
     .eq("user_id", userId)
     .maybeSingle();
 
   if (error && isMissingColumnError(error, [
     "plan_name",
+    "cancel_at_period_end",
     "subscription_renews_at",
     "usage_period_start",
     "usage_period_end",
@@ -335,6 +433,7 @@ async function getOrCreateCustomer(userId, email) {
     user_id: userId,
     stripe_customer_id: customer.id,
     status: subscription?.status || null,
+    cancel_at_period_end: subscription?.cancel_at_period_end || false,
     stripe_subscription_id: subscription?.stripe_subscription_id || null,
     plan_name: subscription?.plan_name || "Second Brain Pro",
     subscription_renews_at: subscription?.subscription_renews_at || null,
@@ -365,11 +464,22 @@ async function handleCreateCheckoutSession(req, res, requestId) {
     }
 
     const customerId = await getOrCreateCustomer(user.id, user.email);
+    const trialEligible = await claimTrialIdentities(user, customerId);
+    const subscriptionData = {
+      metadata: {
+        supabase_user_id: user.id,
+      },
+    };
+
+    if (trialEligible) {
+      subscriptionData.trial_period_days = 2;
+    }
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
       client_reference_id: user.id,
+      allow_promotion_codes: true,
       line_items: [
         {
           price: env.STRIPE_PRICE_ID,
@@ -381,12 +491,7 @@ async function handleCreateCheckoutSession(req, res, requestId) {
       metadata: {
         supabase_user_id: user.id,
       },
-      subscription_data: {
-        trial_period_days: 2,
-        metadata: {
-          supabase_user_id: user.id,
-        },
-      },
+      subscription_data: subscriptionData,
     });
 
     if (!session.url) {
@@ -399,6 +504,37 @@ async function handleCreateCheckoutSession(req, res, requestId) {
   } catch (error) {
     sendJson(res, error.statusCode || 500, {
       error: error instanceof Error ? error.message : "Unable to create checkout session.",
+    }, requestId);
+  }
+}
+
+async function handleCreateBillingPortalSession(req, res, requestId) {
+  try {
+    const user = await authenticateSupabaseRequest(req);
+    const subscription = await fetchSubscription(user.id);
+    const customerId = subscription?.stripe_customer_id;
+
+    if (!customerId) {
+      throw Object.assign(new Error("No Stripe customer exists for this account."), {
+        statusCode: 400,
+      });
+    }
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: `${env.PUBLIC_APP_URL}/account`,
+    });
+
+    if (!session.url) {
+      throw Object.assign(new Error("Stripe did not return a billing portal URL."), {
+        statusCode: 500,
+      });
+    }
+
+    sendJson(res, 200, { url: session.url }, requestId);
+  } catch (error) {
+    sendJson(res, error.statusCode || 500, {
+      error: error instanceof Error ? error.message : "Unable to open billing portal.",
     }, requestId);
   }
 }
@@ -428,6 +564,7 @@ async function upsertSubscriptionPayload(payload) {
 
   if (!error || !isMissingColumnError(error, [
     "plan_name",
+    "cancel_at_period_end",
     "subscription_renews_at",
     "usage_period_start",
     "usage_period_end",
@@ -438,6 +575,7 @@ async function upsertSubscriptionPayload(payload) {
   }
 
   const {
+    cancel_at_period_end: _cancelAtPeriodEnd,
     plan_name: _planName,
     subscription_renews_at: _subscriptionRenewsAt,
     usage_period_end: _usagePeriodEnd,
@@ -456,6 +594,7 @@ async function upsertSubscriptionFromStripe(subscription) {
   const userId = await resolveStripeSubscriptionUser(subscription);
   const payload = {
     user_id: userId,
+    cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
     stripe_customer_id:
       typeof subscription.customer === "string" ? subscription.customer : null,
     stripe_subscription_id: subscription.id,
@@ -465,7 +604,6 @@ async function upsertSubscriptionFromStripe(subscription) {
     trial_start: toIsoFromStripeTimestamp(subscription.trial_start),
     trial_end: toIsoFromStripeTimestamp(subscription.trial_end),
     updated_at: new Date().toISOString(),
-    usage_request_limit: 1000,
   };
 
   const { error } = await upsertSubscriptionPayload(payload);
@@ -908,6 +1046,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/create-checkout-session") {
       await handleCreateCheckoutSession(req, res, requestId);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/create-billing-portal-session") {
+      await handleCreateBillingPortalSession(req, res, requestId);
       return;
     }
 

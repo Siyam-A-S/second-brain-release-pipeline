@@ -118,10 +118,17 @@ Example response:
 ## Stripe And Supabase
 
 - `POST /api/create-checkout-session` requires Supabase bearer token and creates Stripe Checkout subscription sessions.
+- Checkout must allow Stripe promotion codes.
+- Checkout applies the trial only when the normalized email or phone identity has not already claimed one.
+- Trial claims are stored as hashed identities in `billing_trial_claims`; do not store raw email or phone there.
+- `POST /api/create-billing-portal-session` requires Supabase bearer token and creates a Stripe Billing Portal session for payment method changes, invoice access, and cancellation.
 - Stripe customer and subscription metadata must include `supabase_user_id`.
+- Stripe webhook sync must preserve support-managed usage overrides such as `usage_request_limit`.
+- Store Stripe `cancel_at_period_end` so the account page can show scheduled cancellation while access remains active.
 - Handle:
   - `checkout.session.completed`
   - `customer.subscription.created`
   - `customer.subscription.updated`
   - `customer.subscription.deleted`
 - Upsert subscription state by `user_id`.
+- Stripe remains the source of truth for billing events; Supabase remains the source of truth for website, desktop, and proxy access checks.
