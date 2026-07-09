@@ -539,7 +539,107 @@ async function handleCreateBillingPortalSession(req, res, requestId) {
   }
 }
 
-async function resolveStripeSubscriptionUser(subscription) {
+function assertMutableStripeSubscription(subscription) {
+  if (!subscription?.stripe_subscription_id) {
+    throw Object.assign(new Error("No Stripe subscription exists for this account."), {
+      statusCode: 400,
+    });
+  }
+
+  if (subscription.status === "canceled" || subscription.status === "incomplete_expired") {
+    throw Object.assign(new Error("This subscription is already canceled."), {
+      statusCode: 400,
+    });
+  }
+}
+
+function toPublicSubscriptionMutation(subscription) {
+  return {
+    cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+    planName: getStripePlanName(subscription),
+    status: subscription.status,
+    subscriptionRenewsAt: getStripeCurrentPeriodEnd(subscription),
+    trialEndsAt: toIsoFromStripeTimestamp(subscription.trial_end),
+  };
+}
+
+async function handleCancelSubscription(req, res, requestId) {
+  try {
+    const user = await authenticateSupabaseRequest(req);
+    const subscription = await fetchSubscription(user.id);
+    assertMutableStripeSubscription(subscription);
+
+    if (subscription.cancel_at_period_end) {
+      sendJson(res, 200, {
+        message: "Subscription cancellation is already scheduled.",
+        subscription: {
+          cancelAtPeriodEnd: true,
+          status: subscription.status,
+          subscriptionRenewsAt: subscription.subscription_renews_at,
+          trialEndsAt: subscription.trial_end,
+        },
+      }, requestId);
+      return;
+    }
+
+    const updatedSubscription = await stripe.subscriptions.update(
+      subscription.stripe_subscription_id,
+      {
+        cancel_at_period_end: true,
+      },
+    );
+    await upsertSubscriptionFromStripe(updatedSubscription, user.id);
+
+    sendJson(res, 200, {
+      message: "Subscription cancellation is scheduled.",
+      subscription: toPublicSubscriptionMutation(updatedSubscription),
+    }, requestId);
+  } catch (error) {
+    sendJson(res, error.statusCode || 500, {
+      error: error instanceof Error ? error.message : "Unable to cancel subscription.",
+    }, requestId);
+  }
+}
+
+async function handleResumeSubscription(req, res, requestId) {
+  try {
+    const user = await authenticateSupabaseRequest(req);
+    const subscription = await fetchSubscription(user.id);
+    assertMutableStripeSubscription(subscription);
+
+    if (!subscription.cancel_at_period_end) {
+      sendJson(res, 200, {
+        message: "Subscription is not scheduled for cancellation.",
+        subscription: {
+          cancelAtPeriodEnd: false,
+          status: subscription.status,
+          subscriptionRenewsAt: subscription.subscription_renews_at,
+          trialEndsAt: subscription.trial_end,
+        },
+      }, requestId);
+      return;
+    }
+
+    const updatedSubscription = await stripe.subscriptions.update(
+      subscription.stripe_subscription_id,
+      {
+        cancel_at_period_end: false,
+      },
+    );
+    await upsertSubscriptionFromStripe(updatedSubscription, user.id);
+
+    sendJson(res, 200, {
+      message: "Subscription cancellation has been removed.",
+      subscription: toPublicSubscriptionMutation(updatedSubscription),
+    }, requestId);
+  } catch (error) {
+    sendJson(res, error.statusCode || 500, {
+      error: error instanceof Error ? error.message : "Unable to resume subscription.",
+    }, requestId);
+  }
+}
+
+async function resolveStripeSubscriptionUser(subscription, fallbackUserId = null) {
   let userId = subscription.metadata?.supabase_user_id || null;
 
   if (!userId && typeof subscription.customer === "string") {
@@ -548,6 +648,10 @@ async function resolveStripeSubscriptionUser(subscription) {
     if (!customer.deleted) {
       userId = customer.metadata?.supabase_user_id || null;
     }
+  }
+
+  if (!userId && fallbackUserId) {
+    userId = fallbackUserId;
   }
 
   if (!userId) {
@@ -590,8 +694,8 @@ async function upsertSubscriptionPayload(payload) {
   });
 }
 
-async function upsertSubscriptionFromStripe(subscription) {
-  const userId = await resolveStripeSubscriptionUser(subscription);
+async function upsertSubscriptionFromStripe(subscription, fallbackUserId = null) {
+  const userId = await resolveStripeSubscriptionUser(subscription, fallbackUserId);
   const payload = {
     user_id: userId,
     cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
@@ -1051,6 +1155,16 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/create-billing-portal-session") {
       await handleCreateBillingPortalSession(req, res, requestId);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/cancel-subscription") {
+      await handleCancelSubscription(req, res, requestId);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/resume-subscription") {
+      await handleResumeSubscription(req, res, requestId);
       return;
     }
 

@@ -21,6 +21,7 @@ type AuthContextValue = {
   isLoading: boolean;
   isSubscribed: boolean;
   isTrialActive: boolean;
+  refreshSubscription: () => Promise<void>;
   session: Session | null;
   signIn: (credentials: AuthCredentials) => Promise<void>;
   signOut: () => Promise<void>;
@@ -71,6 +72,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [subscription, setSubscription] = useState<SubscriptionRow | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  async function refreshSubscription() {
+    setError(null);
+
+    if (!user) {
+      setSubscription(null);
+      return;
+    }
+
+    const nextSubscription = await fetchSubscription(user.id);
+    setSubscription(nextSubscription);
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -251,6 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         isSubscribed,
         isTrialActive,
+        refreshSubscription,
         session,
         signIn,
         signOut,

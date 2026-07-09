@@ -4,8 +4,12 @@ Use this when changing subscriptions, cancellation, trials, discounts, usage lim
 
 ## Customer Billing Rules
 
-- Customers must be able to manage and cancel subscriptions through Stripe Billing Portal from the account page.
+- Customers must be able to schedule cancellation directly from the account page.
+- Keep Stripe Billing Portal available from the account page for payment methods, invoices, and Stripe-hosted billing management.
 - Do not cancel subscriptions by editing Supabase rows manually; Stripe webhooks must sync the final access state.
+- Direct cancellation APIs should update the Stripe subscription first, then immediately sync the returned Stripe subscription into Supabase.
+- Prefer period-end cancellation for paid subscriptions so customers keep access they already paid for.
+- If a subscription has `cancel_at_period_end = true`, offer a clear resume action while Stripe still allows it.
 - Configure cancellation behavior in Stripe Billing Portal settings. If cancellation is scheduled for period end, preserve access until Stripe marks the subscription inactive.
 - Store `cancel_at_period_end` from Stripe so the website can show scheduled cancellation separately from expired access.
 - Keep account copy calm and direct: explain that Stripe manages billing and Supabase manages access state.

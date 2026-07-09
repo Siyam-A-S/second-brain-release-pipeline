@@ -122,6 +122,8 @@ Example response:
 - Checkout applies the trial only when the normalized email or phone identity has not already claimed one.
 - Trial claims are stored as hashed identities in `billing_trial_claims`; do not store raw email or phone there.
 - `POST /api/create-billing-portal-session` requires Supabase bearer token and creates a Stripe Billing Portal session for payment method changes, invoice access, and cancellation.
+- `POST /api/cancel-subscription` requires Supabase bearer token and schedules the authenticated user's Stripe subscription to cancel at period end.
+- `POST /api/resume-subscription` requires Supabase bearer token and removes a scheduled period-end cancellation when Stripe still allows the subscription to continue.
 - Stripe customer and subscription metadata must include `supabase_user_id`.
 - Stripe webhook sync must preserve support-managed usage overrides such as `usage_request_limit`.
 - Store Stripe `cancel_at_period_end` so the account page can show scheduled cancellation while access remains active.

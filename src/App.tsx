@@ -9,8 +9,10 @@ import {
   KeyRound,
   LogOut,
   MonitorDown,
+  RotateCcw,
   ShieldCheck,
   UserRound,
+  XCircle,
 } from "lucide-react";
 import {
   Link,
@@ -537,13 +539,18 @@ function AccountPage() {
     isLoading,
     isSubscribed,
     isTrialActive,
+    refreshSubscription,
     subscription,
     user,
   } = useAuth();
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [portalError, setPortalError] = useState<string | null>(null);
+  const [subscriptionActionError, setSubscriptionActionError] = useState<string | null>(null);
+  const [subscriptionNotice, setSubscriptionNotice] = useState<string | null>(null);
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
+  const [isCancelingSubscription, setIsCancelingSubscription] = useState(false);
+  const [isResumingSubscription, setIsResumingSubscription] = useState(false);
   const [release, setRelease] = useState<LatestRelease | null>(null);
   const [releaseError, setReleaseError] = useState<string | null>(null);
   const location = useLocation();
@@ -610,6 +617,8 @@ function AccountPage() {
 
     setCheckoutError(null);
     setPortalError(null);
+    setSubscriptionActionError(null);
+    setSubscriptionNotice(null);
     setIsStartingCheckout(true);
 
     try {
@@ -652,6 +661,8 @@ function AccountPage() {
 
     setCheckoutError(null);
     setPortalError(null);
+    setSubscriptionActionError(null);
+    setSubscriptionNotice(null);
     setIsOpeningPortal(true);
 
     try {
@@ -683,6 +694,93 @@ function AccountPage() {
       );
     } finally {
       setIsOpeningPortal(false);
+    }
+  }
+
+  async function postSubscriptionAction(
+    path: string,
+    fallbackMessage: string,
+    successMessage: string,
+  ) {
+    if (!accessToken) {
+      setSubscriptionActionError("Sign in again before changing your subscription.");
+      return;
+    }
+
+    setCheckoutError(null);
+    setPortalError(null);
+    setSubscriptionActionError(null);
+    setSubscriptionNotice(null);
+
+    const response = await fetch(path, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        payload && typeof payload.error === "string"
+          ? payload.error
+          : fallbackMessage,
+      );
+    }
+
+    await refreshSubscription();
+    setSubscriptionNotice(
+      payload && typeof payload.message === "string" ? payload.message : successMessage,
+    );
+  }
+
+  async function handleCancelSubscription() {
+    const shouldCancel = window.confirm(
+      "Cancel this subscription? You will keep access until the current Stripe period ends.",
+    );
+
+    if (!shouldCancel) {
+      return;
+    }
+
+    setIsCancelingSubscription(true);
+
+    try {
+      await postSubscriptionAction(
+        "/api/cancel-subscription",
+        "Unable to cancel subscription.",
+        "Subscription cancellation is scheduled.",
+      );
+    } catch (requestError) {
+      setSubscriptionActionError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to cancel subscription.",
+      );
+    } finally {
+      setIsCancelingSubscription(false);
+    }
+  }
+
+  async function handleResumeSubscription() {
+    setIsResumingSubscription(true);
+
+    try {
+      await postSubscriptionAction(
+        "/api/resume-subscription",
+        "Unable to resume subscription.",
+        "Subscription cancellation has been removed.",
+      );
+    } catch (requestError) {
+      setSubscriptionActionError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to resume subscription.",
+      );
+    } finally {
+      setIsResumingSubscription(false);
     }
   }
 
@@ -729,9 +827,15 @@ function AccountPage() {
           </div>
         ) : null}
 
-        {checkoutError || portalError || error ? (
+        {subscriptionNotice ? (
+          <div className="mt-6 rounded-md border border-[#236f5a]/20 bg-[#236f5a]/10 px-4 py-3 text-sm text-[#1d5d4c]">
+            {subscriptionNotice}
+          </div>
+        ) : null}
+
+        {checkoutError || portalError || subscriptionActionError || error ? (
           <div className="mt-6 rounded-md border border-[#e55934]/20 bg-[#e55934]/10 px-4 py-3 text-sm text-[#9f321c]">
-            {checkoutError ?? portalError ?? error}
+            {checkoutError ?? portalError ?? subscriptionActionError ?? error}
           </div>
         ) : null}
 
@@ -775,10 +879,10 @@ function AccountPage() {
                 </dd>
               </div>
             </dl>
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
               <button
                 className="inline-flex items-center justify-center gap-2 rounded-md bg-[#236f5a] px-5 py-3 font-medium text-white shadow-sm transition hover:bg-[#1d5d4c] disabled:cursor-not-allowed disabled:opacity-70"
-                disabled={isStartingCheckout || isOpeningPortal}
+                disabled={isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription}
                 onClick={() => {
                   void handleStartCheckout();
                 }}
@@ -789,7 +893,7 @@ function AccountPage() {
               </button>
               <button
                 className="inline-flex items-center justify-center gap-2 rounded-md border border-black/10 bg-white px-5 py-3 font-medium text-neutral-900 shadow-sm transition hover:border-black/20 disabled:cursor-not-allowed disabled:opacity-70"
-                disabled={isStartingCheckout || isOpeningPortal || !subscription?.stripe_customer_id}
+                disabled={isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription || !subscription?.stripe_customer_id}
                 onClick={() => {
                   void handleOpenBillingPortal();
                 }}
@@ -798,6 +902,33 @@ function AccountPage() {
                 <ExternalLink className="h-4 w-4" />
                 {isOpeningPortal ? "Opening..." : "Manage billing"}
               </button>
+              {subscription?.stripe_subscription_id && subscription.status !== "canceled" ? (
+                subscription.cancel_at_period_end ? (
+                  <button
+                    className="inline-flex items-center justify-center gap-2 rounded-md border border-[#236f5a]/30 bg-white px-5 py-3 font-medium text-[#1d5d4c] shadow-sm transition hover:border-[#236f5a]/60 disabled:cursor-not-allowed disabled:opacity-70"
+                    disabled={isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription}
+                    onClick={() => {
+                      void handleResumeSubscription();
+                    }}
+                    type="button"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    {isResumingSubscription ? "Resuming..." : "Resume subscription"}
+                  </button>
+                ) : (
+                  <button
+                    className="inline-flex items-center justify-center gap-2 rounded-md border border-[#e55934]/30 bg-white px-5 py-3 font-medium text-[#9f321c] shadow-sm transition hover:border-[#e55934]/60 disabled:cursor-not-allowed disabled:opacity-70"
+                    disabled={isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription}
+                    onClick={() => {
+                      void handleCancelSubscription();
+                    }}
+                    type="button"
+                  >
+                    <XCircle className="h-4 w-4" />
+                    {isCancelingSubscription ? "Canceling..." : "Cancel subscription"}
+                  </button>
+                )
+              ) : null}
             </div>
           </section>
 
