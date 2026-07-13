@@ -34,6 +34,7 @@ Authorization: Bearer <supabase_access_token>
 
 `GET /api/desktop/account`
 - Requires Supabase bearer token.
+- Valid signed-in users are active even without a Stripe subscription.
 - Return:
   - `email`
   - `userId`
@@ -41,14 +42,16 @@ Authorization: Bearer <supabase_access_token>
   - `planName`
   - `trialEndsAt`
   - `subscriptionRenewsAt`
-  - `usage.periodStart`
-  - `usage.periodEnd`
-  - `usage.requests`
-  - `usage.requestLimit`
+  - `usage.label`
+  - `usage.used`
+  - `usage.limit`
+  - `usage.resetAt`
+  - `usage.updatedAt`
   - `lastVerifiedAt`
   - `release`
-- Allowed status values are `signed_out`, `trialing`, `active`, `past_due`, `canceled`, and `expired`.
-- Authenticated requests without active or trialing access return `expired`, `past_due`, or `canceled` instead of exposing Stripe internals.
+- `status` is `active` for valid signed-in users unless a future banned/disabled account state is added.
+- Active Pro subscription returns `planName: "Second Brain Pro"` and daily limit `1000`.
+- Missing, expired, canceled, or past-due Pro subscription falls back to `planName: "Second Brain Free"` and the configured free daily limit.
 - Do not return Supabase tokens, Stripe IDs, service-role data, passwords, or legacy access keys.
 
 Example response:
@@ -57,15 +60,16 @@ Example response:
 {
   "email": "user@example.com",
   "userId": "supabase-user-id",
-  "status": "trialing",
-  "planName": "Second Brain Pro",
-  "trialEndsAt": "2026-08-01T00:00:00.000Z",
+  "status": "active",
+  "planName": "Second Brain Free",
+  "trialEndsAt": null,
   "subscriptionRenewsAt": null,
   "usage": {
-    "periodStart": "2026-07-01T00:00:00.000Z",
-    "periodEnd": "2026-08-01T00:00:00.000Z",
-    "requests": 0,
-    "requestLimit": 1000
+    "label": "Daily requests",
+    "used": 42,
+    "limit": 250,
+    "resetAt": "2026-07-14T00:00:00.000Z",
+    "updatedAt": "2026-07-13T12:00:00.000Z"
   },
   "lastVerifiedAt": "2026-07-09T00:00:00.000Z",
   "release": null,
@@ -118,9 +122,10 @@ Example response:
 ## Stripe And Supabase
 
 - `POST /api/create-checkout-session` requires Supabase bearer token and creates Stripe Checkout subscription sessions.
+- Checkout is for the Pro plan only and uses Stripe `mode: "subscription"`.
 - Checkout must allow Stripe promotion codes.
-- Checkout applies the trial only when the normalized email or phone identity has not already claimed one.
-- Trial claims are stored as hashed identities in `billing_trial_claims`; do not store raw email or phone there.
+- Do not pass `payment_method_types`; let Stripe dynamic payment methods work.
+- Free accounts do not require Stripe subscriptions.
 - `POST /api/create-billing-portal-session` requires Supabase bearer token and creates a Stripe Billing Portal session for payment method changes, invoice access, and cancellation.
 - `POST /api/cancel-subscription` requires Supabase bearer token and schedules the authenticated user's Stripe subscription to cancel at period end.
 - `POST /api/resume-subscription` requires Supabase bearer token and removes a scheduled period-end cancellation when Stripe still allows the subscription to continue.
@@ -134,3 +139,11 @@ Example response:
   - `customer.subscription.deleted`
 - Upsert subscription state by `user_id`.
 - Stripe remains the source of truth for billing events; Supabase remains the source of truth for website, desktop, and proxy access checks.
+
+## Proxy Usage RPC
+
+- `consume_proxy_usage(p_user_id, p_increment)` enforces daily Free/Pro request limits.
+- Return fields are `allowed`, `reason`, `plan_name`, `used`, `limit`, `reset_at`, and `updated_at`.
+- Active Pro gets `Second Brain Pro` and `1000` daily requests.
+- Any valid signed-in non-Pro user gets `Second Brain Free` and the configured free daily request limit.
+- Over-limit responses return `allowed: false` and `reason: "over_limit"`.

@@ -6,7 +6,6 @@ import {
   CreditCard,
   Download,
   ExternalLink,
-  KeyRound,
   LogOut,
   Menu,
   Monitor,
@@ -67,7 +66,24 @@ const releaseSchema = z.object({
   }),
 });
 
+const desktopAccountSchema = z.object({
+  email: z.string().nullable(),
+  planName: z.string(),
+  status: z.string(),
+  subscriptionRenewsAt: z.string().nullable().optional(),
+  trialEndsAt: z.string().nullable().optional(),
+  usage: z.object({
+    label: z.string(),
+    limit: z.number(),
+    resetAt: z.string(),
+    updatedAt: z.string().nullable().optional(),
+    used: z.number(),
+  }),
+  userId: z.string(),
+});
+
 type LatestRelease = z.infer<typeof releaseSchema>["release"];
+type DesktopAccount = z.infer<typeof desktopAccountSchema>;
 type DownloadPlatform = "macos" | "windows";
 type Tone = "accent" | "danger" | "neutral" | "warning";
 type ButtonVariant = "primary" | "secondary";
@@ -122,6 +138,25 @@ function useLatestRelease() {
   }, []);
 
   return { release, releaseError };
+}
+
+async function fetchDesktopAccount(accessToken: string) {
+  const response = await fetch("/api/desktop/account", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      payload && typeof payload.error === "string"
+        ? payload.error
+        : "Unable to load account usage.",
+    );
+  }
+
+  return desktopAccountSchema.parse(payload);
 }
 
 function formatDate(value: string | null | undefined) {
@@ -613,8 +648,8 @@ function LandingPage() {
             A quiet place for <em className="text-[var(--accent)]">your private work</em>.
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-8 text-[var(--text-secondary)]">
-            Download the desktop app, sign in with your account, and keep subscription
-            access, production updates, and support diagnostics in one calm workspace.
+            Download the desktop app, sign in with your account, and keep Free or
+            Pro access, production updates, and support diagnostics in one calm workspace.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <ButtonLink href={primaryAsset?.url ?? "#download"}>
@@ -642,8 +677,8 @@ function LandingPage() {
             },
             {
               icon: CreditCard,
-              title: "Subscribe in Stripe",
-              text: "Checkout applies eligible trials, promotion codes, and subscription access through webhooks.",
+              title: "Upgrade when you need more",
+              text: "Free accounts get daily managed requests. Pro raises the limit through Stripe subscription billing.",
             },
             {
               icon: ShieldCheck,
@@ -667,29 +702,29 @@ function LandingPage() {
               Simple billing, hosted by <em className="text-[var(--accent)]">Stripe</em>.
             </h2>
             <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
-              Start or manage your subscription from the account page. Usage limits
-              are stored in Supabase and enforced by the managed proxy.
+              Signed-in accounts start on Free. Upgrade to Pro from the account page
+              when you need a higher daily request limit.
             </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <PriceCard
-              amount="Subscription"
+              amount="Free"
               current
               features={[
-                "Desktop account access",
-                "Production updates",
-                "Managed request limit",
+                "Supabase account required",
+                "250 managed requests per day",
+                "GitHub-hosted production updates",
               ]}
-              name="Second Brain Pro"
+              name="Second Brain Free"
             />
             <PriceCard
-              amount="Support"
+              amount="$10/mo"
               features={[
-                "Billing through Stripe",
-                "Redacted diagnostics",
-                "GitHub-hosted downloads",
+                "1000 managed requests per day",
+                "Stripe billing portal",
+                "Free fallback if canceled",
               ]}
-              name="Account support"
+              name="Second Brain Pro"
             />
           </div>
         </div>
@@ -901,11 +936,8 @@ function AccountPage() {
   const {
     accessToken,
     error,
-    hasAccessBlocked,
     isAuthenticated,
     isLoading,
-    isSubscribed,
-    isTrialActive,
     refreshSubscription,
     subscription,
     user,
@@ -918,34 +950,59 @@ function AccountPage() {
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [isCancelingSubscription, setIsCancelingSubscription] = useState(false);
   const [isResumingSubscription, setIsResumingSubscription] = useState(false);
+  const [account, setAccount] = useState<DesktopAccount | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [isAccountLoading, setIsAccountLoading] = useState(false);
   const { release, releaseError } = useLatestRelease();
   const location = useLocation();
 
+  const isPro = account?.planName === "Second Brain Pro";
+  const displayPlanName = account?.planName ?? "Second Brain Free";
   const statusLabel = useMemo(() => {
-    if (subscription?.cancel_at_period_end && (isSubscribed || isTrialActive)) {
+    if (subscription?.cancel_at_period_end && isPro) {
       return "Cancellation scheduled";
     }
 
-    if (isSubscribed) {
-      return "Access active";
-    }
-
-    if (isTrialActive) {
-      return "Trial active";
-    }
-
-    return "No active subscription";
-  }, [isSubscribed, isTrialActive, subscription?.cancel_at_period_end]);
+    return displayPlanName;
+  }, [displayPlanName, isPro, subscription?.cancel_at_period_end]);
 
   const statusTone: Tone = subscription?.cancel_at_period_end
     ? "warning"
-    : isSubscribed || isTrialActive
+    : isPro
       ? "accent"
-      : hasAccessBlocked
-        ? "warning"
-        : "neutral";
-  const usageRequests = Number(subscription?.usage_requests ?? 0);
-  const usageLimit = Number(subscription?.usage_request_limit ?? 1000);
+      : "neutral";
+  const usageRequests = Number(account?.usage.used ?? 0);
+  const usageLimit = Number(account?.usage.limit ?? 250);
+  const usageResetAt = account?.usage.resetAt ?? null;
+  const usageUpdatedAt = account?.usage.updatedAt ?? null;
+  const billingStatus = subscription?.stripe_subscription_id
+    ? subscription.status || "Unknown"
+    : "Free";
+
+  async function refreshAccountState() {
+    if (!accessToken) {
+      setAccount(null);
+      return;
+    }
+
+    setIsAccountLoading(true);
+    setAccountError(null);
+
+    try {
+      const nextAccount = await fetchDesktopAccount(accessToken);
+      setAccount(nextAccount);
+    } catch (requestError) {
+      setAccountError(
+        requestError instanceof Error ? requestError.message : "Unable to load account usage.",
+      );
+    } finally {
+      setIsAccountLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshAccountState();
+  }, [accessToken]);
 
   useEffect(() => {
     const stripeKey = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
@@ -1077,6 +1134,7 @@ function AccountPage() {
     }
 
     await refreshSubscription();
+    await refreshAccountState();
     setSubscriptionNotice(
       payload && typeof payload.message === "string" ? payload.message : successMessage,
     );
@@ -1170,9 +1228,14 @@ function AccountPage() {
 
           {subscriptionNotice ? <InlineMessage tone="accent">{subscriptionNotice}</InlineMessage> : null}
 
-          {checkoutError || portalError || subscriptionActionError || error ? (
+          {checkoutError || portalError || subscriptionActionError || accountError || error ? (
             <InlineMessage tone="danger">
-              {checkoutError ?? portalError ?? subscriptionActionError ?? friendlyAuthError(error) ?? "Something went wrong. Try again."}
+              {checkoutError ??
+                portalError ??
+                subscriptionActionError ??
+                accountError ??
+                friendlyAuthError(error) ??
+                "Something went wrong. Try again."}
             </InlineMessage>
           ) : null}
         </div>
@@ -1193,13 +1256,19 @@ function AccountPage() {
 
             <dl className="mt-6">
               <DataRow label="Email" value={user?.email ?? "Not available"} />
-              <DataRow label="Plan" value={subscription?.plan_name ?? "Second Brain Pro"} />
+              <DataRow label="Plan" value={displayPlanName} />
               <DataRow label="Status" value={<Pill tone={statusTone}>{statusLabel}</Pill>} />
+              <DataRow label="Billing status" value={billingStatus} />
               <DataRow
                 label={subscription?.cancel_at_period_end ? "Access ends" : "Renews"}
-                value={formatDate(subscription?.subscription_renews_at)}
+                value={isPro ? formatDate(subscription?.subscription_renews_at) : "No paid renewal"}
               />
-              <DataRow label="Usage" value={`${usageRequests} / ${usageLimit} requests`} />
+              <DataRow label="Usage" value={`${usageRequests} / ${usageLimit} daily requests`} />
+              <DataRow label="Resets" value={formatDate(usageResetAt)} />
+              <DataRow
+                label="Last metered"
+                value={usageUpdatedAt ? formatDate(usageUpdatedAt) : isAccountLoading ? "Loading" : "Not used today"}
+              />
             </dl>
 
             <div className="mt-7 border-t border-[var(--border-subtle)] pt-5">
@@ -1233,13 +1302,13 @@ function AccountPage() {
             <div className="mt-6 grid gap-4">
               <PriceCard
                 amount={statusLabel}
-                current={isSubscribed || isTrialActive}
+                current
                 features={[
-                  "Desktop account access",
+                  `${usageLimit} daily requests`,
                   "Production update checks",
-                  `${usageLimit} managed requests`,
+                  `${usageLimit} request limit today`,
                 ]}
-                name={subscription?.plan_name ?? "Second Brain Pro"}
+                name={displayPlanName}
               />
               <PriceCard
                 amount="Hosted"
@@ -1254,14 +1323,14 @@ function AccountPage() {
 
             <div className="mt-6 flex flex-col gap-3">
               <Button
-                disabled={isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription}
+                disabled={isPro || isStartingCheckout || isOpeningPortal || isCancelingSubscription || isResumingSubscription}
                 onClick={() => {
                   void handleStartCheckout();
                 }}
                 type="button"
               >
                 <CreditCard className="h-4 w-4" />
-                {isStartingCheckout ? "Redirecting" : "Start subscription"}
+                {isStartingCheckout ? "Redirecting" : isPro ? "Pro active" : "Upgrade to Pro"}
               </Button>
               <Button
                 disabled={

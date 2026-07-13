@@ -32,16 +32,12 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-function hasActiveTrial(subscription: SubscriptionRow | null) {
-  if (!subscription?.trial_end) {
-    return false;
-  }
-
-  return new Date(subscription.trial_end).getTime() > Date.now();
+function hasActiveTrial() {
+  return false;
 }
 
 function hasPaidAccess(subscription: SubscriptionRow | null) {
-  return subscription?.status === "active" || subscription?.status === "trialing";
+  return subscription?.status === "active" && Boolean(subscription.stripe_subscription_id);
 }
 
 async function fetchSubscription(userId: string) {
@@ -250,9 +246,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSubscription(null);
   }
 
-  const isTrialActive = hasActiveTrial(subscription);
+  const isTrialActive = hasActiveTrial();
   const isSubscribed = hasPaidAccess(subscription);
-  const hasAccessBlocked = Boolean(user) && !isTrialActive && !isSubscribed;
+  const hasAccessBlocked = false;
 
   return (
     <AuthContext.Provider

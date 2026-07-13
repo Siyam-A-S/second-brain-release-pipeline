@@ -31,8 +31,8 @@ If the active account, project, service, or region is unclear, stop and ask. Nev
 
 - Accept `Authorization: Bearer <supabase_access_token>`.
 - Validate tokens server-side with Supabase Auth or Supabase Admin APIs.
-- Resolve user subscription/trial/usage state before forwarding model requests.
-- Reject inactive, expired, or over-limit users with compact JSON errors.
+- Resolve signed-in Free or active Pro entitlement state before forwarding model requests.
+- Reject missing/invalid tokens and over-limit users with compact JSON errors.
 - Support OpenAI-compatible `POST /v1/chat/completions` for Graphify CLI proxy mode.
 - Forward approved requests to Vertex/OpenAI-compatible backend.
 - Preserve or generate request IDs and include them in logs and responses.
@@ -75,11 +75,13 @@ Add `--set-env-vars` only for non-secret values. Add `--set-secrets` for secrets
 
 ## Metering
 
-- Meter accepted model requests by validated Supabase user ID.
-- Store compact usage rows or counters in Supabase, not on the laptop.
-- Count request start, completion/failure status, model, token estimates when available, and request ID.
+- Meter every model-facing request by validated Supabase user ID before forwarding.
+- Store compact daily usage counters in Supabase, not on the laptop.
+- Free defaults to `250` requests/day; active Pro defaults to `1000` requests/day.
+- Use `consume_proxy_usage(p_user_id, 1)` as the atomic source of truth for allow/deny decisions.
+- Return compact `429` JSON when `reason` is `over_limit`, including plan name, used, limit, and reset timestamp.
+- Log request ID, user ID, plan, status, and model.
 - Avoid storing prompts, document text, embeddings, file paths, raw model responses, or bearer tokens.
-- Enforce the website account defaults until real usage rows exist: monthly period, `requests`, and `requestLimit`.
 
 ## Log Extraction To Laptop
 
@@ -128,5 +130,6 @@ Expected behavior:
 - Health endpoint returns a compact success payload.
 - Missing bearer token returns `401`.
 - Invalid bearer token returns `401`.
-- Valid but inactive account returns `403`.
-- Valid active/trialing account reaches the model backend and writes metering.
+- Valid signed-in Free account reaches the model backend until the daily Free limit is exhausted.
+- Valid active Pro account reaches the model backend until the daily Pro limit is exhausted.
+- Canceled, expired, or past-due Pro falls back to Free entitlement.

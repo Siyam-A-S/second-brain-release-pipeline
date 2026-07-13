@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import Stripe from "stripe";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
@@ -19,9 +19,11 @@ const configSchema = z.object({
     (value) => (value === "" ? undefined : value),
     z.string().min(1).optional(),
   ),
+  FREE_DAILY_REQUEST_LIMIT: z.coerce.number().int().min(1).max(100000).default(250),
   LOG_BATCH_MAX: z.coerce.number().int().min(1).max(100).default(25),
   LOG_MAX_BYTES: z.coerce.number().int().min(1024).max(262144).default(65536),
   LOG_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(120).default(10),
+  PRO_DAILY_REQUEST_LIMIT: z.coerce.number().int().min(1).max(100000).default(1000),
   PUBLIC_APP_URL: z.string().url(),
   RELEASE_CACHE_TTL_SECONDS: z.coerce.number().int().min(15).max(3600).default(300),
   STRIPE_PRICE_ID: z.string().min(1),
@@ -32,6 +34,9 @@ const configSchema = z.object({
 });
 
 const env = configSchema.parse(process.env);
+
+const FREE_PLAN_NAME = "Second Brain Free";
+const PRO_PLAN_NAME = "Second Brain Pro";
 
 const stripe = new Stripe(env.STRIPE_SECRET_KEY);
 const supabaseAdmin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
@@ -84,6 +89,11 @@ const desktopLogBodySchema = z.object({
 });
 
 const releaseCache = {
+  expiresAt: 0,
+  value: null,
+};
+
+const entitlementSettingsCache = {
   expiresAt: 0,
   value: null,
 };
@@ -187,102 +197,6 @@ async function authenticateSupabaseRequest(req) {
   return data.user;
 }
 
-function normalizeEmail(value) {
-  const normalized = String(value || "").trim().toLowerCase();
-  return normalized.includes("@") ? normalized : null;
-}
-
-function normalizePhone(value) {
-  const digitsOnly = String(value || "").replace(/\D/g, "");
-  return digitsOnly.length >= 10 ? digitsOnly : null;
-}
-
-function hashTrialIdentity(value) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function getTrialIdentityCandidates(user) {
-  const candidates = [];
-  const email = normalizeEmail(user.email);
-
-  if (email) {
-    candidates.push({
-      identity_hash: hashTrialIdentity(email),
-      identity_type: "email",
-    });
-  }
-
-  const phoneValues = [
-    user.phone,
-    user.user_metadata?.phone,
-    user.user_metadata?.phone_number,
-    user.app_metadata?.phone,
-  ];
-  const phone = normalizePhone(phoneValues.find(Boolean));
-
-  if (phone) {
-    candidates.push({
-      identity_hash: hashTrialIdentity(phone),
-      identity_type: "phone",
-    });
-  }
-
-  return candidates;
-}
-
-function isUniqueConstraintError(error) {
-  return error?.code === "23505" || /duplicate key|unique constraint/i.test(error?.message || "");
-}
-
-async function hasTrialClaim(identities) {
-  for (const identity of identities) {
-    const { data, error } = await supabaseAdmin
-      .from("billing_trial_claims")
-      .select("identity_type, identity_hash")
-      .eq("identity_type", identity.identity_type)
-      .eq("identity_hash", identity.identity_hash)
-      .maybeSingle();
-
-    if (error) {
-      throw Object.assign(new Error(error.message), { statusCode: 500 });
-    }
-
-    if (data) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-async function claimTrialIdentities(user, customerId) {
-  const identities = getTrialIdentityCandidates(user);
-
-  if (!identities.length || await hasTrialClaim(identities)) {
-    return false;
-  }
-
-  const now = new Date().toISOString();
-  const rows = identities.map((identity) => ({
-    ...identity,
-    claimed_at: now,
-    first_user_id: user.id,
-    last_seen_at: now,
-    stripe_customer_id: customerId,
-  }));
-  const { error } = await supabaseAdmin.from("billing_trial_claims").insert(rows);
-
-  if (!error) {
-    return true;
-  }
-
-  if (isUniqueConstraintError(error)) {
-    return false;
-  }
-
-  throw Object.assign(new Error(error.message), { statusCode: 500 });
-}
-
 function isMissingColumnError(error, columnNames) {
   const haystack = `${error?.code || ""} ${error?.message || ""} ${error?.details || ""}`;
   return columnNames.some((columnName) => haystack.includes(columnName));
@@ -294,12 +208,12 @@ function normalizeSubscriptionRow(subscription) {
   }
 
   return {
-    plan_name: "Second Brain Pro",
+    plan_name: FREE_PLAN_NAME,
     cancel_at_period_end: false,
     subscription_renews_at: null,
     usage_period_end: null,
     usage_period_start: null,
-    usage_request_limit: 1000,
+    usage_request_limit: env.FREE_DAILY_REQUEST_LIMIT,
     usage_requests: 0,
     ...subscription,
   };
@@ -359,59 +273,103 @@ function getStripeCurrentPeriodEnd(subscription) {
   return toIsoFromStripeTimestamp(itemPeriodEnd);
 }
 
-function getStripePlanName(subscription) {
-  const firstItem = subscription.items?.data?.[0];
-  const nickname = firstItem?.price?.nickname;
-
-  if (nickname) {
-    return nickname;
-  }
-
-  const product = firstItem?.price?.product;
-
-  if (product && typeof product === "object" && "name" in product) {
-    return product.name;
-  }
-
-  return "Second Brain Pro";
+function getStripePlanName(_subscription) {
+  return PRO_PLAN_NAME;
 }
 
-function getDesktopAccountStatus(subscription) {
-  const status = subscription?.status || null;
-  const trialEndMs = subscription?.trial_end
-    ? new Date(subscription.trial_end).getTime()
-    : 0;
-  const trialActive = Boolean(trialEndMs && trialEndMs > Date.now());
-
-  if (status === "trialing" || trialActive) {
-    return "trialing";
-  }
-
-  if (status === "active" || status === "past_due" || status === "canceled") {
-    return status;
-  }
-
-  return "expired";
+function getDesktopAccountStatus(_subscription) {
+  return "active";
 }
 
-function getDefaultUsagePeriod(now = new Date()) {
-  const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+function getDailyUsageWindow(now = new Date()) {
+  const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const resetAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
 
   return {
-    periodEnd: periodEnd.toISOString(),
-    periodStart: periodStart.toISOString(),
+    bucketDate: periodStart.toISOString().slice(0, 10),
+    resetAt: resetAt.toISOString(),
   };
 }
 
-function toDesktopUsage(subscription) {
-  const defaults = getDefaultUsagePeriod();
+function hasActivePro(subscription) {
+  return subscription?.status === "active" && Boolean(subscription?.stripe_subscription_id);
+}
+
+async function getEntitlementSettings() {
+  if (entitlementSettingsCache.value && entitlementSettingsCache.expiresAt > Date.now()) {
+    return entitlementSettingsCache.value;
+  }
+
+  const fallback = {
+    freeDailyRequestLimit: env.FREE_DAILY_REQUEST_LIMIT,
+    proDailyRequestLimit: env.PRO_DAILY_REQUEST_LIMIT,
+  };
+
+  const { data, error } = await supabaseAdmin
+    .from("account_entitlement_settings")
+    .select("key, value")
+    .in("key", ["free_daily_request_limit", "pro_daily_request_limit"]);
+
+  if (error && isMissingColumnError(error, ["account_entitlement_settings"])) {
+    return fallback;
+  }
+
+  if (error) {
+    throw Object.assign(new Error(error.message), { statusCode: 500 });
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  const freeSetting = rows.find((row) => row.key === "free_daily_request_limit")?.value;
+  const proSetting = rows.find((row) => row.key === "pro_daily_request_limit")?.value;
+  const value = {
+    freeDailyRequestLimit: Number(freeSetting ?? fallback.freeDailyRequestLimit),
+    proDailyRequestLimit: Number(proSetting ?? fallback.proDailyRequestLimit),
+  };
+
+  entitlementSettingsCache.value = value;
+  entitlementSettingsCache.expiresAt = Date.now() + 60 * 1000;
+  return value;
+}
+
+function resolveEntitlement(subscription, settings) {
+  const isPro = hasActivePro(subscription);
 
   return {
-    periodEnd: subscription?.usage_period_end || defaults.periodEnd,
-    periodStart: subscription?.usage_period_start || defaults.periodStart,
-    requestLimit: Number(subscription?.usage_request_limit ?? 1000),
-    requests: Number(subscription?.usage_requests ?? 0),
+    isPro,
+    planName: isPro ? PRO_PLAN_NAME : FREE_PLAN_NAME,
+    requestLimit: isPro ? settings.proDailyRequestLimit : settings.freeDailyRequestLimit,
+  };
+}
+
+async function fetchDailyUsage(userId, entitlement) {
+  const window = getDailyUsageWindow();
+  const { data, error } = await supabaseAdmin
+    .from("account_usage_daily")
+    .select("used, request_limit, plan_name, reset_at, updated_at")
+    .eq("user_id", userId)
+    .eq("bucket_date", window.bucketDate)
+    .maybeSingle();
+
+  if (error && isMissingColumnError(error, ["account_usage_daily"])) {
+    return {
+      label: "Daily requests",
+      limit: entitlement.requestLimit,
+      resetAt: window.resetAt,
+      updatedAt: null,
+      used: 0,
+    };
+  }
+
+  if (error) {
+    throw Object.assign(new Error(error.message), { statusCode: 500 });
+  }
+
+  return {
+    label: "Daily requests",
+    limit: Number(data?.request_limit ?? entitlement.requestLimit),
+    resetAt: data?.reset_at || window.resetAt,
+    updatedAt: data?.updated_at || null,
+    used: Number(data?.used ?? 0),
   };
 }
 
@@ -435,13 +393,13 @@ async function getOrCreateCustomer(userId, email) {
     status: subscription?.status || null,
     cancel_at_period_end: subscription?.cancel_at_period_end || false,
     stripe_subscription_id: subscription?.stripe_subscription_id || null,
-    plan_name: subscription?.plan_name || "Second Brain Pro",
+    plan_name: subscription?.plan_name || FREE_PLAN_NAME,
     subscription_renews_at: subscription?.subscription_renews_at || null,
-    trial_end: subscription?.trial_end || null,
-    trial_start: subscription?.trial_start || null,
+    trial_end: null,
+    trial_start: null,
     usage_period_end: subscription?.usage_period_end || null,
     usage_period_start: subscription?.usage_period_start || null,
-    usage_request_limit: subscription?.usage_request_limit || 1000,
+    usage_request_limit: subscription?.usage_request_limit || env.FREE_DAILY_REQUEST_LIMIT,
     usage_requests: subscription?.usage_requests || 0,
   };
   const { error } = await upsertSubscriptionPayload(payload);
@@ -464,16 +422,11 @@ async function handleCreateCheckoutSession(req, res, requestId) {
     }
 
     const customerId = await getOrCreateCustomer(user.id, user.email);
-    const trialEligible = await claimTrialIdentities(user, customerId);
     const subscriptionData = {
       metadata: {
         supabase_user_id: user.id,
       },
     };
-
-    if (trialEligible) {
-      subscriptionData.trial_period_days = 2;
-    }
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -973,20 +926,23 @@ async function handleUpdate(platform, currentVersion, res, requestId) {
 async function handleDesktopAccount(req, res, requestId) {
   try {
     const user = await authenticateSupabaseRequest(req);
-    const [subscription, release] = await Promise.all([
+    const [subscription, release, entitlementSettings] = await Promise.all([
       fetchSubscription(user.id),
       getLatestProductionRelease().catch(() => null),
+      getEntitlementSettings(),
     ]);
+    const entitlement = resolveEntitlement(subscription, entitlementSettings);
+    const usage = await fetchDailyUsage(user.id, entitlement);
 
     sendJson(res, 200, {
       email: user.email || null,
       lastVerifiedAt: new Date().toISOString(),
-      planName: subscription?.plan_name || "Second Brain Pro",
+      planName: entitlement.planName,
       release: release ? toPublicRelease(release) : null,
       status: getDesktopAccountStatus(subscription),
-      subscriptionRenewsAt: subscription?.subscription_renews_at || null,
-      trialEndsAt: subscription?.trial_end || null,
-      usage: toDesktopUsage(subscription),
+      subscriptionRenewsAt: entitlement.isPro ? subscription?.subscription_renews_at || null : null,
+      trialEndsAt: null,
+      usage,
       userId: user.id,
     }, requestId);
   } catch (error) {

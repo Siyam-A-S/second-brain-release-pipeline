@@ -4,6 +4,8 @@ Use this when changing subscriptions, cancellation, trials, discounts, usage lim
 
 ## Customer Billing Rules
 
+- Production access is signed-in freemium: valid Supabase users get Free without a Stripe subscription.
+- Pro is a Stripe subscription priced at `$10/month`.
 - Customers must be able to schedule cancellation directly from the account page.
 - Keep Stripe Billing Portal available from the account page for payment methods, invoices, and Stripe-hosted billing management.
 - Do not cancel subscriptions by editing Supabase rows manually; Stripe webhooks must sync the final access state.
@@ -12,20 +14,17 @@ Use this when changing subscriptions, cancellation, trials, discounts, usage lim
 - If a subscription has `cancel_at_period_end = true`, offer a clear resume action while Stripe still allows it.
 - Configure cancellation behavior in Stripe Billing Portal settings. If cancellation is scheduled for period end, preserve access until Stripe marks the subscription inactive.
 - Store `cancel_at_period_end` from Stripe so the website can show scheduled cancellation separately from expired access.
-- Keep account copy calm and direct: explain that Stripe manages billing and Supabase manages access state.
+- Keep account copy calm and direct: explain that Stripe manages Pro billing and Supabase manages access state.
 
 ## Trial Policy
 
-- Trial eligibility is enforced server-side, never by browser state.
-- The trial is one per normalized email or phone identity across cancellations and recreated accounts.
-- Store trial claims in `billing_trial_claims` as SHA-256 hashes of normalized identities.
-- Do not store raw email or phone in `billing_trial_claims`.
-- If a user has already claimed a trial, Checkout should create a paid subscription without another trial.
-- Existing trial subscriptions should be backfilled into `billing_trial_claims` during migration.
+- Do not add production free trials unless the product rules explicitly change again.
+- Free is the default entitlement for signed-in users.
+- Canceled, expired, or past-due Pro users fall back to Free instead of being blocked.
 
 ## Discounts And Pricing
 
-- Change subscription fee by creating a new Stripe Price and updating `STRIPE_PRICE_ID` in Coolify for new checkouts.
+- Change the Pro subscription fee by creating a new Stripe Price and updating `STRIPE_PRICE_ID` in Coolify for new checkouts.
 - Existing customers keep their current Stripe subscription price until migrated or updated in Stripe.
 - Use Stripe coupons and promotion codes for discounts. The website should allow promotion codes in Checkout.
 - For a specific user, prefer a Stripe customer-specific coupon/promotion code or a manual Stripe subscription discount over custom app billing code.
@@ -33,9 +32,11 @@ Use this when changing subscriptions, cancellation, trials, discounts, usage lim
 
 ## Usage Limits
 
-- Proxy usage limits live in Supabase `subscriptions.usage_request_limit` and are enforced server-side by the Cloud Run proxy.
+- Proxy usage limits are daily and enforced by `consume_proxy_usage`.
+- Free default is `250` daily requests; Pro default is `1000` daily requests.
+- Keep the website account API and Cloud Run proxy aligned with Supabase `account_entitlement_settings`.
 - Stripe webhook sync must not reset support-managed usage limits.
-- Support can raise or lower a user limit by updating `usage_request_limit`; keep `usage_requests` as the current metered period counter.
+- Support can adjust global plan limits by updating `account_entitlement_settings`.
 - Real proxy metering should write compact counters only. Do not store prompts, document text, embeddings, file paths, raw model responses, or bearer tokens.
 
 ## Support Workflow
