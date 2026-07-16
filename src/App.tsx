@@ -6,6 +6,9 @@ import {
   CreditCard,
   Download,
   ExternalLink,
+  FileSpreadsheet,
+  FileText,
+  Image as ImageIcon,
   LogOut,
   Menu,
   Monitor,
@@ -19,9 +22,12 @@ import {
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
+  type CSSProperties,
+  type DragEvent,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -87,10 +93,60 @@ type DesktopAccount = z.infer<typeof desktopAccountSchema>;
 type DownloadPlatform = "macos" | "windows";
 type Tone = "accent" | "danger" | "neutral" | "warning";
 type ButtonVariant = "primary" | "secondary";
+type DemoFileKind = "pdf" | "xlsx" | "docx" | "md" | "image";
+type DemoState = "idle" | "dragging" | "building" | "ready" | "limit_reached" | "unsupported";
+
+type DemoFile = {
+  id: string;
+  kind: DemoFileKind;
+  label: string;
+  accent: string;
+};
+
+type DemoNode = {
+  id: string;
+  label: string;
+  type: "source" | "concept" | "entity" | "question" | "insight";
+  community: number;
+  degree: number;
+};
+
+type DemoLink = {
+  source: string;
+  target: string;
+  relation: string;
+  weight: number;
+};
+
+type DemoGraph = {
+  file: DemoFile;
+  links: DemoLink[];
+  nodes: DemoNode[];
+};
+
+type PositionedDemoNode = DemoNode & {
+  x: number;
+  y: number;
+};
+
+type PositionedDemoGraph = DemoGraph & {
+  nodes: PositionedDemoNode[];
+};
 
 const containerClass = "mx-auto max-w-[1080px] px-5 sm:px-10";
 const cardClass =
   "rounded-[14px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]";
+const MAX_DEMO_DROPS_PER_SESSION = 8;
+const BUILD_ANIMATION_MS = 900;
+const GRAPH_SETTLE_MS = 1800;
+
+const demoFiles: DemoFile[] = [
+  { id: "research-pdf", kind: "pdf", label: "Research.pdf", accent: "#BE3A4A" },
+  { id: "budget-xlsx", kind: "xlsx", label: "Budget.xlsx", accent: "#2E7D4F" },
+  { id: "proposal-docx", kind: "docx", label: "Proposal.docx", accent: "#2869B8" },
+  { id: "notes-md", kind: "md", label: "Notes.md", accent: "#596170" },
+  { id: "whiteboard-image", kind: "image", label: "Whiteboard.png", accent: "#7A4BC2" },
+];
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -202,6 +258,220 @@ function getAssetForPlatform(release: LatestRelease | null, platform: DownloadPl
   }
 
   return release.assets[platform];
+}
+
+function getFileIcon(kind: DemoFileKind) {
+  if (kind === "xlsx") {
+    return FileSpreadsheet;
+  }
+
+  if (kind === "image") {
+    return ImageIcon;
+  }
+
+  return FileText;
+}
+
+function getDemoLabels(kind: DemoFileKind) {
+  const labelsByKind: Record<DemoFileKind, string[]> = {
+    docx: [
+      "Source",
+      "Goal",
+      "Timeline",
+      "Stakeholder",
+      "Constraint",
+      "Milestone",
+      "Decision",
+      "Scope",
+      "Risk",
+      "Review",
+      "Next Step",
+      "Owner",
+      "Launch",
+    ],
+    image: [
+      "Source",
+      "Diagram",
+      "Component",
+      "Flow",
+      "Question",
+      "Pattern",
+      "Next Step",
+      "Boundary",
+      "Signal",
+    ],
+    md: [
+      "Source",
+      "Idea",
+      "Todo",
+      "Reference",
+      "Topic",
+      "Follow-up",
+      "Insight",
+      "Note",
+      "Link",
+      "Draft",
+    ],
+    pdf: [
+      "Source",
+      "Methods",
+      "Dataset",
+      "Claim",
+      "Result",
+      "Citation",
+      "Open Question",
+      "Summary",
+      "Evidence",
+      "Figure",
+      "Author",
+      "Finding",
+      "Limit",
+      "Thread",
+    ],
+    xlsx: [
+      "Source",
+      "Revenue",
+      "Costs",
+      "Forecast",
+      "Risk",
+      "Vendor",
+      "Quarter",
+      "Runway",
+      "Delta",
+      "Target",
+      "Margin",
+      "Scenario",
+    ],
+  };
+
+  return labelsByKind[kind];
+}
+
+function getNodeType(index: number): DemoNode["type"] {
+  if (index === 0) {
+    return "source";
+  }
+
+  if (index % 7 === 0) {
+    return "question";
+  }
+
+  if (index % 5 === 0) {
+    return "insight";
+  }
+
+  return index % 2 === 0 ? "entity" : "concept";
+}
+
+function buildDemoGraph(file: DemoFile): DemoGraph {
+  const labels = getDemoLabels(file.kind);
+  const linkCounts: Record<DemoFileKind, number> = {
+    docx: 19,
+    image: 12,
+    md: 14,
+    pdf: 22,
+    xlsx: 18,
+  };
+  const nodes = labels.map((label, index) => ({
+    community: index === 0 ? 0 : (index % 4) + 1,
+    degree: index === 0 ? 7 : 2 + (index % 4),
+    id: `${file.kind}-${index}`,
+    label: index === 0 ? file.label : label,
+    type: getNodeType(index),
+  }));
+  const links: DemoLink[] = [];
+  const targetLinkCount = linkCounts[file.kind];
+
+  for (let index = 1; index < nodes.length && links.length < targetLinkCount; index += 1) {
+    links.push({
+      relation: index % 2 === 0 ? "supports" : "mentions",
+      source: nodes[0].id,
+      target: nodes[index].id,
+      weight: 0.5 + ((index % 4) * 0.16),
+    });
+  }
+
+  for (let index = 1; links.length < targetLinkCount; index += 1) {
+    const source = nodes[index % nodes.length];
+    const target = nodes[((index * 3) % (nodes.length - 1)) + 1];
+
+    if (source.id !== target.id && !links.some((link) => link.source === source.id && link.target === target.id)) {
+      links.push({
+        relation: index % 3 === 0 ? "connects" : "extends",
+        source: source.id,
+        target: target.id,
+        weight: 0.35 + ((index % 5) * 0.11),
+      });
+    }
+  }
+
+  return { file, links, nodes };
+}
+
+function positionDemoGraph(graph: DemoGraph): PositionedDemoGraph {
+  const nodes = graph.nodes.map((node, index) => {
+    if (index === 0) {
+      return { ...node, x: 0.5, y: 0.5 };
+    }
+
+    const ring = index % 3 === 0 ? 0.36 : 0.27;
+    const angle = (index / Math.max(graph.nodes.length - 1, 1)) * Math.PI * 2 - Math.PI / 2;
+    const communityOffset = (node.community - 2) * 0.025;
+
+    return {
+      ...node,
+      x: 0.5 + Math.cos(angle) * ring + communityOffset,
+      y: 0.5 + Math.sin(angle) * ring - communityOffset,
+    };
+  });
+
+  return { ...graph, nodes };
+}
+
+function useReducedMotionPreference() {
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) {
+      return;
+    }
+
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const syncPreference = () => setPrefersReducedMotion(query.matches);
+    syncPreference();
+    query.addEventListener("change", syncPreference);
+
+    return () => {
+      query.removeEventListener("change", syncPreference);
+    };
+  }, []);
+
+  return prefersReducedMotion;
+}
+
+function useElementSize<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [size, setSize] = useState({ height: 0, width: 0 });
+
+  useEffect(() => {
+    const element = ref.current;
+
+    if (!element || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(([entry]) => {
+      const rect = entry.contentRect;
+      setSize({ height: rect.height, width: rect.width });
+    });
+    observer.observe(element);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  return { ref, size };
 }
 
 function friendlyAuthError(value: string | null | undefined) {
@@ -415,8 +685,13 @@ function NavBar() {
           className="flex items-center gap-3 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)]"
           to="/"
         >
-          <span className="grid h-9 w-9 place-items-center rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] font-display text-[15px] text-[var(--text-primary)] shadow-[var(--shadow-card)]">
-            Sb
+          <span className="block h-10 w-10 overflow-hidden rounded-xl">
+            <img
+              alt=""
+              aria-hidden="true"
+              className="h-full w-full object-cover"
+              src="/icon.ico"
+            />
           </span>
           <span className="font-display text-[17px] text-[var(--text-primary)]">Second Brain</span>
         </Link>
@@ -584,14 +859,9 @@ function ProductPreview() {
       <div className="grid gap-0 md:grid-cols-[0.92fr_1.08fr]">
         <div className="border-b border-[var(--border-subtle)] p-5 md:border-b-0 md:border-r">
           <div className="space-y-3">
-            {["Research", "Invoices", "Meeting notes", "Local archive"].map((label, index) => (
+            {["Research", "Dataset", "Meeting notes", "Local paper archive", "Slide Deck", "Report", "Email"].map((label) => (
               <div
-                className={cx(
-                  "rounded-xl border px-4 py-3 text-sm",
-                  index === 0
-                    ? "border-[var(--accent)] bg-[var(--accent-tint)] text-[var(--accent-text-on-tint)]"
-                    : "border-[var(--border-subtle)] bg-[var(--bg-page)] text-[var(--text-secondary)]",
-                )}
+                className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-page)] px-4 py-3 text-sm text-[var(--text-secondary)]"
                 key={label}
               >
                 {label}
@@ -603,17 +873,396 @@ function ProductPreview() {
           <p className="font-display text-[28px] leading-tight text-[var(--text-primary)]">
             Find the note, file, or answer without breaking flow.
           </p>
-          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <ul className="mt-6 grid gap-3 text-sm font-medium text-[var(--text-primary)] sm:grid-cols-2">
             {["Local context", "Account access", "Release updates", "Redacted logs"].map((label) => (
-              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-page)] p-4" key={label}>
-                <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
-                <p className="mt-3 text-sm font-medium text-[var(--text-primary)]">{label}</p>
-              </div>
+              <li className="flex items-center gap-2" key={label}>
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--accent)]" />
+                <span>{label}</span>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       </div>
     </Card>
+  );
+}
+
+function DemoGraphCanvas({
+  activeNodeId,
+  graph,
+  isBuilding,
+  prefersReducedMotion,
+}: {
+  activeNodeId: string | null;
+  graph: PositionedDemoGraph | null;
+  isBuilding: boolean;
+  prefersReducedMotion: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isVisibleRef = useRef(true);
+  const { ref: wrapRef, size } = useElementSize<HTMLDivElement>();
+
+  useEffect(() => {
+    const element = wrapRef.current;
+
+    if (!element || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+
+    const observer = new IntersectionObserver(([entry]) => {
+      isVisibleRef.current = entry.isIntersecting;
+    });
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, [wrapRef]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+
+    if (!canvas || !graph || size.width < 20 || size.height < 20) {
+      return;
+    }
+
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      return;
+    }
+
+    const ctx = context;
+    const currentGraph = graph;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.floor(size.width);
+    const height = Math.floor(size.height);
+    canvas.width = Math.max(1, Math.floor(width * dpr));
+    canvas.height = Math.max(1, Math.floor(height * dpr));
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+
+    const nodeColors: Record<DemoNode["type"], string> = {
+      concept: "#6F7F4B",
+      entity: "#755A88",
+      insight: "#2F766D",
+      question: "#9A6A35",
+      source: currentGraph.file.accent,
+    };
+    const startedAt = performance.now();
+    let frameId = 0;
+
+    function easeOut(value: number) {
+      return 1 - Math.pow(1 - value, 3);
+    }
+
+    function draw(now: number) {
+      const isVisible = isVisibleRef.current && document.visibilityState !== "hidden";
+      const settleProgress = prefersReducedMotion
+        ? 1
+        : easeOut(Math.min((now - startedAt) / GRAPH_SETTLE_MS, 1));
+      const nodePositions = new Map<string, { x: number; y: number; node: PositionedDemoNode }>();
+      const entryX = width * 0.2;
+      const entryY = height * 0.72;
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+
+      const gradient = ctx.createLinearGradient(0, 0, width, height);
+      gradient.addColorStop(0, "#FAF4DF");
+      gradient.addColorStop(1, "#F5EFD5");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      for (const node of currentGraph.nodes) {
+        const targetX = node.x * width;
+        const targetY = node.y * height;
+        const startOffset = node.community * 8;
+        nodePositions.set(node.id, {
+          node,
+          x: entryX + (targetX - entryX) * settleProgress + Math.sin(node.degree + settleProgress * 4) * startOffset * (1 - settleProgress),
+          y: entryY + (targetY - entryY) * settleProgress + Math.cos(node.degree + settleProgress * 4) * startOffset * (1 - settleProgress),
+        });
+      }
+
+      for (const link of currentGraph.links) {
+        const source = nodePositions.get(link.source);
+        const target = nodePositions.get(link.target);
+
+        if (!source || !target) {
+          continue;
+        }
+
+        const isActive = activeNodeId === source.node.id || activeNodeId === target.node.id || source.node.type === "source";
+        ctx.beginPath();
+        ctx.moveTo(source.x, source.y);
+        ctx.lineTo(target.x, target.y);
+        ctx.strokeStyle = isActive ? "rgba(0, 102, 102, 0.34)" : "rgba(94, 88, 72, 0.17)";
+        ctx.lineWidth = isActive ? 1.6 : 1;
+        ctx.stroke();
+
+        if (!prefersReducedMotion && isVisible && settleProgress > 0.55) {
+          const particleProgress = ((now * (0.00012 + link.weight * 0.00008)) + link.weight) % 1;
+          const particleX = source.x + (target.x - source.x) * particleProgress;
+          const particleY = source.y + (target.y - source.y) * particleProgress;
+          ctx.beginPath();
+          ctx.arc(particleX, particleY, isActive ? 2.4 : 1.8, 0, Math.PI * 2);
+          ctx.fillStyle = isActive ? "rgba(0, 102, 102, 0.72)" : "rgba(117, 90, 136, 0.35)";
+          ctx.fill();
+        }
+      }
+
+      for (const { node, x, y } of nodePositions.values()) {
+        const isActive = activeNodeId === node.id || node.type === "source";
+        const radius = node.type === "source" ? 13 : 7 + Math.min(node.degree, 6);
+
+        ctx.beginPath();
+        ctx.arc(x + 1, y + 2, radius + 1, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(54, 48, 32, 0.12)";
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = isActive ? "#006666" : nodeColors[node.type];
+        ctx.fill();
+        ctx.lineWidth = isActive ? 2 : 1;
+        ctx.strokeStyle = isActive ? "rgba(255, 255, 255, 0.92)" : "rgba(255, 255, 255, 0.62)";
+        ctx.stroke();
+
+        if (node.type === "source" || isActive || node.degree >= 5 || currentGraph.nodes.length <= 10) {
+          const text = node.label.length > 16 ? `${node.label.slice(0, 15)}...` : node.label;
+          ctx.font = "500 12px IBM Plex Sans, system-ui, sans-serif";
+          const metrics = ctx.measureText(text);
+          const labelWidth = metrics.width + 14;
+          const labelX = Math.min(Math.max(x - labelWidth / 2, 8), width - labelWidth - 8);
+          const labelY = Math.min(y + radius + 9, height - 26);
+
+          ctx.fillStyle = "rgba(255, 250, 240, 0.88)";
+          ctx.strokeStyle = "rgba(228, 225, 214, 0.88)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.roundRect(labelX, labelY, labelWidth, 22, 8);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = "#211F19";
+          ctx.fillText(text, labelX + 7, labelY + 15);
+        }
+      }
+
+      if (isBuilding) {
+        const pulse = prefersReducedMotion ? 0.18 : 0.16 + Math.sin(now / 120) * 0.06;
+        ctx.fillStyle = `rgba(0, 102, 102, ${pulse})`;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      if (!prefersReducedMotion || settleProgress < 1) {
+        frameId = window.requestAnimationFrame(draw);
+      }
+    }
+
+    frameId = window.requestAnimationFrame(draw);
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeNodeId, graph, isBuilding, prefersReducedMotion, size.height, size.width]);
+
+  return (
+    <div
+      className="relative min-h-[300px] overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[#f7f1d8] shadow-inner sm:min-h-[360px]"
+      ref={wrapRef}
+    >
+      {graph ? (
+        <canvas
+          aria-label={`Demo graph from ${graph.file.label}`}
+          className="absolute inset-0 h-full w-full"
+          ref={canvasRef}
+          role="img"
+        />
+      ) : (
+        <div className="grid min-h-[300px] place-items-center px-6 text-center text-sm leading-6 text-[var(--text-secondary)] sm:min-h-[360px]">
+          <div>
+            <div className="mx-auto mb-4 h-2 w-32 rounded-full bg-[rgba(0,102,102,0.2)]" />
+            Choose a mock file to preview a local graph.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InteractiveGraphDropDemo() {
+  const [selectedFile, setSelectedFile] = useState<DemoFile | null>(null);
+  const [demoState, setDemoState] = useState<DemoState>("idle");
+  const [dropCount, setDropCount] = useState(0);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const buildTimerRef = useRef<number | null>(null);
+  const prefersReducedMotion = useReducedMotionPreference();
+  const graph = useMemo(
+    () => (selectedFile ? positionDemoGraph(buildDemoGraph(selectedFile)) : null),
+    [selectedFile],
+  );
+  const statusText = demoState === "building"
+    ? "Mapping connections..."
+    : demoState === "ready" && graph
+      ? `${Math.max(graph.nodes.length - 1, 0)} concepts · ${graph.links.length} relationships`
+      : demoState === "limit_reached"
+        ? "Demo limit reached. Refresh to play again."
+        : demoState === "unsupported"
+          ? "This website demo uses mock files only."
+          : "Drop a mock file";
+
+  useEffect(() => {
+    if (!graph) {
+      return;
+    }
+
+    setActiveNodeId(graph.nodes[0]?.id ?? null);
+  }, [graph]);
+
+  useEffect(() => {
+    return () => {
+      if (buildTimerRef.current) {
+        window.clearTimeout(buildTimerRef.current);
+      }
+    };
+  }, []);
+
+  function startDemo(file: DemoFile) {
+    if (dropCount >= MAX_DEMO_DROPS_PER_SESSION) {
+      setDemoState("limit_reached");
+      return;
+    }
+
+    if (buildTimerRef.current) {
+      window.clearTimeout(buildTimerRef.current);
+    }
+
+    setDropCount((value) => value + 1);
+    setSelectedFile(file);
+    setDemoState("building");
+
+    buildTimerRef.current = window.setTimeout(() => {
+      setDemoState("ready");
+      buildTimerRef.current = null;
+    }, prefersReducedMotion ? 180 : BUILD_ANIMATION_MS);
+  }
+
+  function getDraggedMockFile(event: DragEvent<HTMLElement>) {
+    const mockId =
+      event.dataTransfer.getData("application/x-second-brain-demo-file") ||
+      event.dataTransfer.getData("text/plain");
+    return demoFiles.find((file) => file.id === mockId) ?? null;
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    if (event.dataTransfer.files.length > 0) {
+      setDemoState("unsupported");
+      return;
+    }
+
+    const file = getDraggedMockFile(event);
+
+    if (!file) {
+      setDemoState("unsupported");
+      return;
+    }
+
+    startDemo(file);
+  }
+
+  return (
+    <section className={cx(containerClass, "py-14")} id="graph-demo">
+      <div className="grid gap-8 md:grid-cols-[0.82fr_1.18fr] md:items-start">
+        <div>
+          <Pill tone="neutral">Interactive demo</Pill>
+          <h2 className="mt-5 font-display text-[32px] font-medium leading-tight text-[var(--text-primary)]">
+            Drop files. Watch your knowledge connect.
+          </h2>
+          <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)]">
+            Second Brain turns notes, PDFs, spreadsheets, documents, and images into a local graph you can explore.
+          </p>
+          <p className="mt-4 text-[13px] leading-6 text-[var(--text-muted)]">
+            This is a visual mock demo. It never uploads files, parses documents, or calls AI.
+          </p>
+        </div>
+
+        <Card className="p-4 sm:p-5">
+          <div className="overflow-x-auto pb-2">
+            <div className="flex min-w-max gap-3">
+              {demoFiles.map((file) => {
+                const Icon = getFileIcon(file.kind);
+
+                return (
+                  <button
+                    aria-label={`Preview graph from ${file.label}`}
+                    className="group flex min-w-[142px] items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-page)] px-3 py-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_1px_2px_rgba(30,28,20,0.05)] transition hover:-translate-y-0.5 hover:border-[var(--border-default)] active:translate-y-0"
+                    draggable
+                    key={file.id}
+                    onClick={() => startDemo(file)}
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData("application/x-second-brain-demo-file", file.id);
+                      event.dataTransfer.setData("text/plain", file.id);
+                      event.dataTransfer.effectAllowed = "copy";
+                      setDemoState("dragging");
+                    }}
+                    style={{ "--file-accent": file.accent } as CSSProperties}
+                    type="button"
+                  >
+                    <span className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--border-subtle)] bg-white text-[var(--file-accent)]">
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-medium text-[var(--text-primary)]">{file.label}</span>
+                      <span className="mt-0.5 block text-[12px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                        {file.kind}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div
+            aria-label="Second Brain demo drop zone"
+            className={cx(
+              "mt-4 rounded-xl border border-dashed px-4 py-4 text-center text-sm font-medium transition",
+              demoState === "dragging"
+                ? "border-[var(--accent)] bg-[var(--accent-tint)] text-[var(--accent-text-on-tint)]"
+                : "border-[var(--border-default)] bg-[var(--bg-page)] text-[var(--text-secondary)]",
+            )}
+            onDragLeave={() => {
+              if (demoState === "dragging") {
+                setDemoState(selectedFile ? "ready" : "idle");
+              }
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+              setDemoState("dragging");
+            }}
+            onDrop={handleDrop}
+            role="region"
+          >
+            {statusText}
+          </div>
+
+          <div className="mt-4">
+            <DemoGraphCanvas
+              activeNodeId={activeNodeId}
+              graph={graph}
+              isBuilding={demoState === "building"}
+              prefersReducedMotion={prefersReducedMotion}
+            />
+          </div>
+
+          <p className="mt-4 text-[13px] leading-6 text-[var(--text-muted)]">
+            {graph
+              ? `Demo graph with ${Math.max(graph.nodes.length - 1, 0)} concepts and ${graph.links.length} relationships.`
+              : "Demo graph will appear here after choosing a mock file."}
+          </p>
+        </Card>
+      </div>
+    </section>
   );
 }
 
@@ -645,11 +1294,10 @@ function LandingPage() {
             {release ? `Now on version ${release.version}` : "Latest production release"}
           </Pill>
           <h1 className="mt-6 max-w-3xl font-display text-[44px] font-medium leading-[1.08] text-[var(--text-primary)] max-sm:text-[28px]">
-            A quiet place for <em className="text-[var(--accent)]">your private work</em>.
+            Your local Context Manager, <em className="text-[var(--accent)]">your second brain</em>.
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-8 text-[var(--text-secondary)]">
-            Download the desktop app, sign in with your account, and keep Free or
-            Pro access, production updates, and support diagnostics in one calm workspace.
+            Drop anything in it.  Chat on it. Generate artifacts. Track remainders and deadlines.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <ButtonLink href={primaryAsset?.url ?? "#download"}>
@@ -694,6 +1342,8 @@ function LandingPage() {
           ))}
         </div>
       </section>
+
+      <InteractiveGraphDropDemo />
 
       <section className={cx(containerClass, "py-14")} id="pricing">
         <div className="grid gap-8 md:grid-cols-[0.85fr_1.15fr] md:items-start">
