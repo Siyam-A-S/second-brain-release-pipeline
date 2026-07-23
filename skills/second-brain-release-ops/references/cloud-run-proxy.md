@@ -31,6 +31,7 @@ If the active account, project, service, or region is unclear, stop and ask. Nev
 
 - Accept `Authorization: Bearer <supabase_access_token>`.
 - Validate tokens server-side with Supabase Auth or Supabase Admin APIs.
+- Require verified email ownership before usage metering or model forwarding.
 - Resolve signed-in Free or active Pro entitlement state before forwarding model requests.
 - Reject missing/invalid tokens and over-limit users with compact JSON errors.
 - Support OpenAI-compatible `POST /v1/chat/completions` for Graphify CLI proxy mode.
@@ -132,4 +133,5 @@ Expected behavior:
 - Invalid bearer token returns `401`.
 - Valid signed-in Free account reaches the model backend until the daily Free limit is exhausted.
 - Valid active Pro account reaches the model backend until the daily Pro limit is exhausted.
+- Unverified email/password accounts return `403` with `email_verification_required`.
 - Canceled, expired, or past-due Pro falls back to Free entitlement.

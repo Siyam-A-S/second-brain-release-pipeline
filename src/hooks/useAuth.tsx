@@ -6,7 +6,12 @@ import {
   type ReactNode,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { isSupabaseConfigured, supabase, type SubscriptionRow } from "../lib/supabase";
+import {
+  getAuthCallbackUrl,
+  isSupabaseConfigured,
+  supabase,
+  type SubscriptionRow,
+} from "../lib/supabase";
 
 type AuthCredentials = {
   email: string;
@@ -22,8 +27,10 @@ type AuthContextValue = {
   isSubscribed: boolean;
   isTrialActive: boolean;
   refreshSubscription: () => Promise<void>;
+  resendConfirmation: (email: string) => Promise<void>;
   session: Session | null;
   signIn: (credentials: AuthCredentials) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   signUp: (credentials: AuthCredentials) => Promise<void>;
   subscription: SubscriptionRow | null;
@@ -198,6 +205,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { error: signUpError } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        emailRedirectTo: getAuthCallbackUrl(),
+      },
     });
 
     if (signUpError) {
@@ -225,6 +235,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (signInError) {
       setError(signInError.message);
       throw signInError;
+    }
+  }
+
+  async function signInWithGoogle() {
+    setError(null);
+
+    if (!supabase) {
+      const missingConfigError = new Error(
+        "Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
+      );
+      setError(missingConfigError.message);
+      throw missingConfigError;
+    }
+
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: getAuthCallbackUrl(),
+        queryParams: {
+          prompt: "select_account",
+        },
+      },
+    });
+
+    if (oauthError) {
+      setError(oauthError.message);
+      throw oauthError;
+    }
+  }
+
+  async function resendConfirmation(email: string) {
+    setError(null);
+
+    if (!supabase) {
+      const missingConfigError = new Error(
+        "Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
+      );
+      setError(missingConfigError.message);
+      throw missingConfigError;
+    }
+
+    const { error: resendError } = await supabase.auth.resend({
+      email,
+      type: "signup",
+      options: {
+        emailRedirectTo: getAuthCallbackUrl(),
+      },
+    });
+
+    if (resendError) {
+      setError(resendError.message);
+      throw resendError;
     }
   }
 
@@ -261,8 +323,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isSubscribed,
         isTrialActive,
         refreshSubscription,
+        resendConfirmation,
         session,
         signIn,
+        signInWithGoogle,
         signOut,
         signUp,
         subscription,

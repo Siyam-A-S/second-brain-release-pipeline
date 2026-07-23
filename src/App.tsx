@@ -41,6 +41,7 @@ import {
 } from "react-router-dom";
 import { z } from "zod";
 import { useAuth } from "./hooks/useAuth";
+import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 const checkoutSessionSchema = z.object({
   url: z.string().url(),
@@ -480,6 +481,10 @@ function friendlyAuthError(value: string | null | undefined) {
   }
 
   const lower = value.toLowerCase();
+
+  if (lower.includes("email_verification_required")) {
+    return "Confirm your email before using Second Brain.";
+  }
 
   if (lower.includes("invalid") || lower.includes("credentials")) {
     return "That email or password did not match. Try again.";
@@ -1431,7 +1436,9 @@ function AuthPage() {
     error,
     isAuthenticated,
     isLoading,
+    resendConfirmation,
     signIn,
+    signInWithGoogle,
     signUp,
   } = useAuth();
   const location = useLocation();
@@ -1445,7 +1452,10 @@ function AuthPage() {
   const [mode, setMode] = useState<"signin" | "signup">(requestedMode);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+  const [isResendingConfirmation, setIsResendingConfirmation] = useState(false);
 
   useEffect(() => {
     setMode(requestedMode);
@@ -1472,7 +1482,8 @@ function AuthPage() {
     try {
       if (mode === "signup") {
         await signUp({ email, password });
-        setNotice("Account created. Check your inbox if email confirmation is enabled.");
+        setConfirmationEmail(email);
+        setNotice("Account created. Check your inbox to verify your email before using the website, desktop app, or managed AI proxy.");
       } else {
         await signIn({ email, password });
         navigate("/account", { replace: true });
@@ -1486,6 +1497,46 @@ function AuthPage() {
     }
   }
 
+  async function handleGoogleSignIn() {
+    setFormError(null);
+    setNotice(null);
+    setIsGoogleSubmitting(true);
+
+    try {
+      await signInWithGoogle();
+    } catch (googleError) {
+      setFormError(
+        googleError instanceof Error ? googleError.message : "Google sign-in failed.",
+      );
+      setIsGoogleSubmitting(false);
+    }
+  }
+
+  async function handleResendConfirmation() {
+    const targetEmail = confirmationEmail || email;
+
+    if (!targetEmail) {
+      setFormError("Enter your email address first.");
+      return;
+    }
+
+    setFormError(null);
+    setIsResendingConfirmation(true);
+
+    try {
+      await resendConfirmation(targetEmail);
+      setNotice("Verification email sent. Open the link on this device to finish account setup.");
+    } catch (resendError) {
+      setFormError(
+        resendError instanceof Error ? resendError.message : "Unable to resend verification email.",
+      );
+    } finally {
+      setIsResendingConfirmation(false);
+    }
+  }
+
+  const authErrorMessage = friendlyAuthError(formError ?? error);
+
   return (
     <AppShell>
       <section className={cx(containerClass, "grid min-h-[calc(100vh-73px)] place-items-center py-14")}>
@@ -1498,11 +1549,32 @@ function AuthPage() {
               {isDesktopLogin ? "Sign in to connect Second Brain." : "Sign in to your workspace."}
             </h1>
             <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
-              Use the same email and password on the website and desktop app.
+              {isDesktopLogin
+                ? "Email/password works in the current desktop app. Google sign-in is available on the website."
+                : "Use email/password or Google to access your Second Brain account."}
             </p>
           </div>
 
           <Card>
+            <Button
+              className="mb-4 w-full"
+              disabled={isLoading || isGoogleSubmitting || isSubmitting}
+              onClick={handleGoogleSignIn}
+              type="button"
+              variant="secondary"
+            >
+              {isGoogleSubmitting ? "Opening Google" : "Continue with Google"}
+              <UserRound className="h-4 w-4" />
+            </Button>
+
+            {isDesktopLogin ? (
+              <div className="mb-5">
+                <InlineMessage tone="neutral">
+                  Google-only desktop login needs a browser OAuth handoff in the desktop app. This website sign-in is ready now.
+                </InlineMessage>
+              </div>
+            ) : null}
+
             <div className="mb-6 grid grid-cols-2 gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-page)] p-1">
               {(["signin", "signup"] as const).map((nextMode) => (
                 <button
@@ -1517,6 +1589,7 @@ function AuthPage() {
                     setMode(nextMode);
                     setFormError(null);
                     setNotice(null);
+                    setConfirmationEmail(null);
                   }}
                   type="button"
                 >
@@ -1562,8 +1635,21 @@ function AuthPage() {
 
               {notice ? <InlineMessage tone="accent">{notice}</InlineMessage> : null}
 
-              {friendlyAuthError(formError ?? error) ? (
-                <InlineMessage tone="danger">{friendlyAuthError(formError ?? error)}</InlineMessage>
+              {mode === "signup" && (confirmationEmail || notice) ? (
+                <Button
+                  className="w-full"
+                  disabled={isResendingConfirmation || isSubmitting}
+                  onClick={handleResendConfirmation}
+                  type="button"
+                  variant="secondary"
+                >
+                  {isResendingConfirmation ? "Sending" : "Resend verification email"}
+                  <RotateCcw className="h-4 w-4" />
+                </Button>
+              ) : null}
+
+              {authErrorMessage ? (
+                <InlineMessage tone="danger">{authErrorMessage}</InlineMessage>
               ) : null}
 
               <Button className="w-full" disabled={isLoading || isSubmitting} type="submit">
@@ -1577,6 +1663,100 @@ function AuthPage() {
             </form>
           </Card>
         </div>
+      </section>
+    </AppShell>
+  );
+}
+
+function AuthCallbackPage() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const navigate = useNavigate();
+  const [callbackError, setCallbackError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function finishCallback() {
+      if (!supabase || !isSupabaseConfigured) {
+        if (isMounted) {
+          setCallbackError("Account services are not configured yet.");
+        }
+        return;
+      }
+
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const queryParams = new URLSearchParams(window.location.search);
+      const providerError = hashParams.get("error_description") || queryParams.get("error_description");
+
+      if (providerError) {
+        if (isMounted) {
+          setCallbackError(providerError);
+        }
+        return;
+      }
+
+      const code = queryParams.get("code");
+
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+        if (error) {
+          if (isMounted) {
+            setCallbackError(error.message);
+          }
+          return;
+        }
+      }
+
+      const { data, error } = await supabase.auth.getSession();
+
+      if (error || !data.session) {
+        if (isMounted) {
+          setCallbackError(error?.message || "Unable to finish sign-in.");
+        }
+        return;
+      }
+
+      navigate("/account", { replace: true });
+    }
+
+    void finishCallback();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      navigate("/account", { replace: true });
+    }
+  }, [isAuthenticated, isLoading, navigate]);
+
+  return (
+    <AppShell>
+      <section className={cx(containerClass, "grid min-h-[calc(100vh-73px)] place-items-center py-14")}>
+        <Card className="w-full max-w-[420px] text-center">
+          <Pill tone={callbackError ? "danger" : "accent"}>
+            {callbackError ? "Sign-in issue" : "Finishing sign-in"}
+          </Pill>
+          <h1 className="mt-5 font-display text-[30px] font-medium leading-tight text-[var(--text-primary)]">
+            {callbackError ? "We could not finish that sign-in." : "One moment."}
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+            {callbackError
+              ? "Return to account access and try again."
+              : "Second Brain is verifying your account session."}
+          </p>
+          {callbackError ? (
+            <div className="mt-5">
+              <InlineMessage tone="danger">{friendlyAuthError(callbackError)}</InlineMessage>
+              <ButtonLink className="mt-5 w-full" href="/auth" variant="secondary">
+                Back to sign in
+              </ButtonLink>
+            </div>
+          ) : null}
+        </Card>
       </section>
     </AppShell>
   );
@@ -2064,6 +2244,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/auth" element={<AuthPage />} />
+      <Route path="/auth/callback" element={<AuthCallbackPage />} />
       <Route path="/account" element={<AccountPage />} />
       <Route path="/login" element={<AuthPage />} />
       <Route path="/checkout" element={<Navigate replace to="/account" />} />

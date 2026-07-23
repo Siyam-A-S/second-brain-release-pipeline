@@ -52,6 +52,14 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
+export function getAuthCallbackUrl() {
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}/auth/callback`;
+  }
+
+  return "https://www.downloadsecondbrain.com/auth/callback";
+}
+
 export const supabase: SupabaseClient<Database> | null = isSupabaseConfigured
   ? createClient<Database>(supabaseUrl, supabaseAnonKey, {
       auth: {

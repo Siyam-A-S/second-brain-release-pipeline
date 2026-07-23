@@ -21,9 +21,11 @@ Implement the desktop side of production account access, update checks, and best
 
 - Keep development builds unchanged unless a shared contract must be introduced.
 - In production builds, Settings must be account-first:
-  - Users sign in with the same Supabase email/password account used on the website.
+  - Users sign in with the same verified Supabase email/password account used on the website.
   - Store Supabase session tokens securely using the app's existing secure storage pattern, or add a Main-process secure storage service if none exists.
   - Do not ask users for account access keys; the release website now uses Supabase sessions.
+  - Treat `email_verification_required` as a recoverable state that sends users to the website to verify their email.
+  - Google sign-in works on the website; Google-only desktop sign-in requires a future browser OAuth callback handoff and should not be converted into an email/password prompt.
 - Desktop API calls must use:
 
 ```text
@@ -149,6 +151,7 @@ logs/second-brain-YYYY-MM-DD.jsonl
 ## Acceptance Criteria
 
 - Production user can sign in from the desktop app using Supabase email/password.
+- Unverified email/password users are shown a verification-required state and are not allowed to use managed account features.
 - Production desktop app can fetch account status from `/api/desktop/account`.
 - Subscription blocked, trialing, active, canceled, and signed-out states render clearly.
 - Missing/expired token triggers a recoverable sign-in state.

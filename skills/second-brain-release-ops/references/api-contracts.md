@@ -4,7 +4,8 @@ Use this when changing desktop auth, account state, release downloads, update ch
 
 ## Authentication
 
-- Desktop and website auth use Supabase email/password sessions.
+- Desktop auth uses verified Supabase email/password sessions.
+- Website auth supports verified email/password plus Google OAuth.
 - Authenticated API calls send:
 
 ```text
@@ -12,7 +13,10 @@ Authorization: Bearer <supabase_access_token>
 ```
 
 - Validate tokens server-side with `supabaseAdmin.auth.getUser(token)`.
+- Require verified email ownership before account, billing, log, or proxy access.
+- Return `403` with `code: "email_verification_required"` for unverified email/password sessions.
 - Do not accept user id or email headers as authority.
+- Google-only users can sign in on the website; desktop Google sign-in requires a future browser OAuth handoff.
 
 ## Public Release APIs
 

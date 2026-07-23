@@ -132,6 +132,18 @@ function sendJson(res, statusCode, payload, requestId, headers = {}) {
   res.end(JSON.stringify({ ...payload, requestId }));
 }
 
+function errorPayload(error, fallback) {
+  const payload = {
+    error: error instanceof Error ? error.message : fallback,
+  };
+
+  if (error && typeof error === "object" && "code" in error && error.code) {
+    payload.code = error.code;
+  }
+
+  return payload;
+}
+
 function sendRedirect(res, statusCode, location, requestId) {
   res.writeHead(statusCode, {
     Location: location,
@@ -194,7 +206,20 @@ async function authenticateSupabaseRequest(req) {
     });
   }
 
+  assertVerifiedEmail(data.user);
+
   return data.user;
+}
+
+function assertVerifiedEmail(user) {
+  const confirmedAt = user.email_confirmed_at || user.confirmed_at;
+
+  if (!user.email || !confirmedAt) {
+    throw Object.assign(new Error("Email verification is required."), {
+      code: "email_verification_required",
+      statusCode: 403,
+    });
+  }
 }
 
 function isMissingColumnError(error, columnNames) {
@@ -455,9 +480,7 @@ async function handleCreateCheckoutSession(req, res, requestId) {
 
     sendJson(res, 200, { url: session.url }, requestId);
   } catch (error) {
-    sendJson(res, error.statusCode || 500, {
-      error: error instanceof Error ? error.message : "Unable to create checkout session.",
-    }, requestId);
+    sendJson(res, error.statusCode || 500, errorPayload(error, "Unable to create checkout session."), requestId);
   }
 }
 
@@ -486,9 +509,7 @@ async function handleCreateBillingPortalSession(req, res, requestId) {
 
     sendJson(res, 200, { url: session.url }, requestId);
   } catch (error) {
-    sendJson(res, error.statusCode || 500, {
-      error: error instanceof Error ? error.message : "Unable to open billing portal.",
-    }, requestId);
+    sendJson(res, error.statusCode || 500, errorPayload(error, "Unable to open billing portal."), requestId);
   }
 }
 
@@ -548,9 +569,7 @@ async function handleCancelSubscription(req, res, requestId) {
       subscription: toPublicSubscriptionMutation(updatedSubscription),
     }, requestId);
   } catch (error) {
-    sendJson(res, error.statusCode || 500, {
-      error: error instanceof Error ? error.message : "Unable to cancel subscription.",
-    }, requestId);
+    sendJson(res, error.statusCode || 500, errorPayload(error, "Unable to cancel subscription."), requestId);
   }
 }
 
@@ -586,9 +605,7 @@ async function handleResumeSubscription(req, res, requestId) {
       subscription: toPublicSubscriptionMutation(updatedSubscription),
     }, requestId);
   } catch (error) {
-    sendJson(res, error.statusCode || 500, {
-      error: error instanceof Error ? error.message : "Unable to resume subscription.",
-    }, requestId);
+    sendJson(res, error.statusCode || 500, errorPayload(error, "Unable to resume subscription."), requestId);
   }
 }
 
@@ -936,7 +953,7 @@ async function handleDesktopAccount(req, res, requestId) {
 
     sendJson(res, 200, {
       email: user.email || null,
-      lastVerifiedAt: new Date().toISOString(),
+      lastVerifiedAt: user.email_confirmed_at || user.confirmed_at || new Date().toISOString(),
       planName: entitlement.planName,
       release: release ? toPublicRelease(release) : null,
       status: getDesktopAccountStatus(subscription),
@@ -946,9 +963,7 @@ async function handleDesktopAccount(req, res, requestId) {
       userId: user.id,
     }, requestId);
   } catch (error) {
-    sendJson(res, error.statusCode || 500, {
-      error: error instanceof Error ? error.message : "Unable to fetch account.",
-    }, requestId);
+    sendJson(res, error.statusCode || 500, errorPayload(error, "Unable to fetch account."), requestId);
   }
 }
 
@@ -1048,9 +1063,7 @@ async function handleDesktopLogs(req, res, requestId) {
       error: error instanceof Error ? error.message : "Invalid log payload",
       statusCode,
     });
-    sendJson(res, statusCode, {
-      error: error instanceof Error ? error.message : "Unable to accept desktop logs.",
-    }, requestId);
+    sendJson(res, statusCode, errorPayload(error, "Unable to accept desktop logs."), requestId);
   }
 }
 

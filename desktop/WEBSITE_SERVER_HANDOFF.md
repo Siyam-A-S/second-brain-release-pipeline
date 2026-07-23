@@ -1,6 +1,6 @@
 # Website Server Handoff For Second Brain Desktop
 
-This handoff is for the agent working on `www.downloadsecondbrain.com` and the managed desktop backend. The production desktop app now authenticates with Supabase email/password and sends Supabase session bearer tokens to website and proxy APIs.
+This handoff is for the agent working on `www.downloadsecondbrain.com` and the managed desktop backend. The production desktop app now authenticates with verified Supabase email/password accounts and sends Supabase session bearer tokens to website and proxy APIs.
 
 ## Required Public Build Config
 
@@ -17,7 +17,7 @@ The Supabase anon key is client-public configuration. Do not expose server-only 
 
 ## Desktop Authentication Flow
 
-Production desktop first-run shows account sign-in. The user enters the same Supabase email/password used on the website.
+Production desktop first-run shows account sign-in. The user enters the same verified Supabase email/password used on the website.
 
 Website login deep link:
 
@@ -32,6 +32,17 @@ Authorization: Bearer <supabase_access_token>
 ```
 
 The server should validate the bearer token against Supabase on every privileged desktop request, derive the user ID from the validated token, then load plan, trial, usage, and entitlement state server-side.
+
+Email/password accounts must complete Supabase email verification before website, desktop API, or proxy access is allowed. Unverified users receive:
+
+```json
+{
+  "error": "Email verification is required.",
+  "code": "email_verification_required"
+}
+```
+
+The website also supports Google sign-in. Google-only desktop sign-in requires a future browser OAuth handoff in the desktop app; do not ask Google-only users to enter an email/password they do not have.
 
 ## Required Website API
 
@@ -125,6 +136,7 @@ Recommended request shape:
 Server requirements:
 
 - Validate Supabase bearer token.
+- Require verified email ownership.
 - Rate-limit by user ID and device if available.
 - Store logs separately from user content.
 - Do not require raw document contents, prompts, file paths, binary payloads, or bearer tokens.
@@ -141,6 +153,7 @@ Authorization: Bearer <supabase_access_token>
 Proxy responsibilities:
 
 - Validate the Supabase token server-side.
+- Require verified email ownership before usage metering or model forwarding.
 - Resolve the user, plan, subscription/trial state, and usage limits.
 - Reject inactive or over-limit accounts with a compact JSON error.
 - Forward approved requests to Vertex/OpenAI-compatible backend.
