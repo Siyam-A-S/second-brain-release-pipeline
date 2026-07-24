@@ -2,6 +2,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import Stripe from "stripe";
@@ -150,6 +151,32 @@ function sendRedirect(res, statusCode, location, requestId) {
     "X-Request-Id": requestId,
   });
   res.end();
+}
+
+function sendStream(response, res, requestId) {
+  const headers = {
+    "Content-Type": response.headers.get("content-type") || "application/octet-stream",
+    "X-Request-Id": requestId,
+  };
+  const contentDisposition = response.headers.get("content-disposition");
+  const contentLength = response.headers.get("content-length");
+
+  if (contentDisposition) {
+    headers["Content-Disposition"] = contentDisposition;
+  }
+
+  if (contentLength) {
+    headers["Content-Length"] = contentLength;
+  }
+
+  res.writeHead(response.status, headers);
+
+  if (!response.body) {
+    res.end();
+    return;
+  }
+
+  Readable.fromWeb(response.body).pipe(res);
 }
 
 function sendFile(filePath, res, requestId) {
@@ -820,9 +847,9 @@ function toPublicRelease(release) {
   };
 }
 
-async function fetchGitHubJson(url) {
+function githubHeaders(accept = "application/vnd.github+json") {
   const headers = {
-    Accept: "application/vnd.github+json",
+    Accept: accept,
     "User-Agent": "second-brain-release-pipeline",
     "X-GitHub-Api-Version": "2022-11-28",
   };
@@ -831,15 +858,63 @@ async function fetchGitHubJson(url) {
     headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
   }
 
+  return headers;
+}
+
+async function fetchGitHubJson(url) {
+  const headers = githubHeaders();
   const response = await fetch(url, { headers });
 
   if (!response.ok) {
-    throw Object.assign(new Error(`GitHub returned ${response.status}.`), {
+    const needsToken = !env.GITHUB_TOKEN && [401, 403, 404].includes(response.status);
+    throw Object.assign(new Error(
+      needsToken
+        ? "GitHub release repository is private or unavailable. Set a server-side GITHUB_TOKEN with read-only access."
+        : `GitHub returned ${response.status}.`,
+    ), {
       statusCode: 502,
     });
   }
 
   return response.json();
+}
+
+async function fetchPrivateReleaseAsset(asset, method = "GET") {
+  if (!asset.url || !env.GITHUB_TOKEN) {
+    return null;
+  }
+
+  const response = await fetch(asset.url, {
+    headers: githubHeaders("application/octet-stream"),
+    method,
+    redirect: "manual",
+  });
+
+  if ([301, 302, 303, 307, 308].includes(response.status)) {
+    const location = response.headers.get("location");
+
+    if (!location) {
+      throw Object.assign(new Error("GitHub did not return a release asset location."), {
+        statusCode: 502,
+      });
+    }
+
+    return {
+      location,
+      response: null,
+    };
+  }
+
+  if (response.ok) {
+    return {
+      location: null,
+      response,
+    };
+  }
+
+  throw Object.assign(new Error(`GitHub release asset download returned ${response.status}.`), {
+    statusCode: 502,
+  });
 }
 
 async function getLatestProductionRelease() {
@@ -882,7 +957,7 @@ async function handleLatestRelease(_req, res, requestId) {
   }
 }
 
-async function handleDownload(platform, res, requestId) {
+async function handleDownload(platform, req, res, requestId) {
   try {
     const normalizedPlatform = normalizePlatform(platform);
 
@@ -901,8 +976,27 @@ async function handleDownload(platform, res, requestId) {
       return /Second-Brain-.*-prod-mac-arm64\.dmg$/i.test(candidate.name);
     });
 
-    if (!asset?.browser_download_url) {
+    if (!asset?.browser_download_url && !asset?.url) {
       sendJson(res, 404, { error: "No release asset exists for this platform." }, requestId);
+      return;
+    }
+
+    const privateDownload = await fetchPrivateReleaseAsset(
+      asset,
+      req.method === "HEAD" ? "HEAD" : "GET",
+    );
+
+    if (privateDownload?.location) {
+      sendRedirect(res, 302, privateDownload.location, requestId);
+      return;
+    }
+
+    if (privateDownload?.response) {
+      logRequest("info", requestId, "github_asset_stream_fallback", {
+        asset: asset.name,
+        platform: normalizedPlatform,
+      });
+      sendStream(privateDownload.response, res, requestId);
       return;
     }
 
@@ -1150,7 +1244,7 @@ const server = http.createServer(async (req, res) => {
     const downloadMatch = url.pathname.match(/^\/api\/downloads\/([^/]+)$/);
 
     if (isGetLike && downloadMatch) {
-      await handleDownload(downloadMatch[1], res, requestId);
+      await handleDownload(downloadMatch[1], req, res, requestId);
       return;
     }
 

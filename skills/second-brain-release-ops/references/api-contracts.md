@@ -27,7 +27,9 @@ Authorization: Bearer <supabase_access_token>
 `GET /api/downloads/windows`
 `GET /api/downloads/macos`
 - Redirect to GitHub `browser_download_url`.
-- Never stream binary assets through the laptop server.
+- If `GITHUB_RELEASE_REPO` is private, require runtime-only `GITHUB_TOKEN` and exchange the GitHub asset API URL for a short-lived signed asset URL server-side before redirecting.
+- Never expose `GITHUB_TOKEN` to the browser or desktop app.
+- Never store binary assets on the laptop server.
 
 `GET /api/updates/:platform/:currentVersion`
 - Platform aliases may normalize to `windows` or `macos`.

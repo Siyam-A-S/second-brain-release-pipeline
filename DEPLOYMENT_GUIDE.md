@@ -78,7 +78,15 @@ STRIPE_PRICE_ID=
 GITHUB_TOKEN=
 ```
 
-`GITHUB_TOKEN` is optional for public releases, but useful to reduce GitHub API rate-limit risk.
+`GITHUB_TOKEN` is optional for public releases. It is required when `GITHUB_RELEASE_REPO` is private.
+
+For a private release repo, create a fine-grained GitHub personal access token:
+
+- Repository access: only `Siyam-A-S/second-brain`
+- Repository permissions: `Contents: read-only`
+- Expiration: short and rotated on a calendar
+
+Store it only as the Coolify runtime secret `GITHUB_TOKEN`. Never put it in a `VITE_` variable or commit it to the repo.
 
 ## 4. Publish Through Cloudflare Tunnel
 
@@ -176,7 +184,7 @@ Then test in a browser:
 4. Start Stripe Checkout in test mode first.
 5. Confirm `/account` shows the signed-in account.
 6. Confirm Stripe webhook updates the `subscriptions` row.
-7. Confirm download links redirect to GitHub release assets.
+7. Confirm download links redirect through the website API to GitHub release assets. For a private release repo, the website exchanges the private asset API URL for a short-lived GitHub asset URL server-side and does not expose `GITHUB_TOKEN`.
 
 ## Secure First-Deployment Principles
 

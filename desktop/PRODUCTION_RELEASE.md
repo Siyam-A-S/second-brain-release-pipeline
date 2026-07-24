@@ -109,7 +109,7 @@ Download and release endpoints:
 - `GET https://www.downloadsecondbrain.com/api/downloads/windows`
 - `GET https://www.downloadsecondbrain.com/api/downloads/macos`
 
-Download endpoints redirect to GitHub Release assets. The laptop server must never host packaged binaries directly.
+Download endpoints redirect to GitHub Release assets. If the release repository is private, the website must use a server-side `GITHUB_TOKEN` to exchange the GitHub asset API URL for a short-lived signed asset URL, then redirect the client there. The laptop server must never store packaged binaries directly.
 
 ## Error And Log Policy
 
@@ -155,7 +155,7 @@ Coolify settings:
 - Start command: `npm run start`
 - Port exposes: `3000`
 - Health check: `/api/health`
-- Runtime-only secrets: `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and optional `GITHUB_TOKEN`
+- Runtime-only secrets: `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `GITHUB_TOKEN` when releases are private
 
 Cloudflare Tunnel should publish `www.downloadsecondbrain.com` to the Coolify-routed service. Supabase site/callback URLs and Stripe webhook URLs should use the public Cloudflare hostname:
 
